@@ -11,3 +11,12 @@ Cargo.lock
 .env
 .env.local
 config.local.toml
+.env
+logs/
+nohup.out
+*.save
+pools_cache_base.json
+out/
+cache/
+data/
+ultimo_log.txt
