@@ -1,0 +1,14 @@
+Terminated
+Terminated
+Terminated
+Terminated
+Terminated
+run_safe.sh: line 30:  3198 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3218 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3224 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3259 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3217 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3265 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  3484 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  7319 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1
+run_safe.sh: line 30:  7497 Killed                  RUST_LOG=warn timeout 7200 ./target/release/orca-engine >> $LOG_DIR/dryrun_amanha.log 2>&1

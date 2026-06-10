@@ -1,0 +1,7 @@
+2026-05-21T22:47:42.372640Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (YaN6) difere do esperado (nFAt). Verifica o .env!
+2026-05-21T22:47:42.908992Z  WARN ThreadId(01) orca_mev::discovery::pool_discovery: [INIT] ⚠️ Cache insuficiente (4 < 20). Bootstrap histórico agressivo necessário...
+2026-05-21T22:47:59.534747Z  WARN ThreadId(01) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-05-21T22:48:04.636948Z  WARN ThreadId(03) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-05-21T22:48:07.331296Z  WARN ThreadId(01) orca_engine: [DISCOVERY] ⚠️  MODO DEGRADADO: 22 pools (alvo: 30). Prosseguindo com liquidez limitada.
+2026-05-21T22:48:07.331375Z  WARN ThreadId(01) orca_engine: [DISCOVERY] ⚠️  O failed_state_speculator irá operar com 22 pools elite/hardcoded.
+2026-05-21T22:48:23.348756Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.

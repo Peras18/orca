@@ -1,0 +1,329 @@
+//! ORCA SEQUENCER SYNC - Sincronização com Sequenciador da Coinbase
+//! 
+//! Monitorização de RTT em microssegundos (μs)
+//! Ajuste dinâmico de timing e priority_fee para primeiros slots
+
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
+use tokio::sync::RwLock;
+use std::sync::Arc;
+
+/// ⏱️ Sincronização com Sequenciador
+#[derive(Clone, Debug)]
+pub struct SequencerSync {
+    /// URL do Protector RPC
+    protector_url: String,
+    /// Histórico de RTT (μs)
+    rtt_history: Arc<RwLock<VecDeque<u64>>>,
+    /// RTT atual (μs)
+    current_rtt_us: Arc<RwLock<u64>>,
+    /// Desvio padrão de RTT
+    rtt_stddev: Arc<RwLock<u64>>,
+    /// Contador de medições
+    measurement_count: Arc<RwLock<u64>>,
+    /// Último bloco visto
+    last_block: Arc<RwLock<u64>>,
+    /// Timestamp do último bloco
+    last_block_time: Arc<RwLock<u64>>,
+    /// Block time médio (Base: 2s)
+    block_time_ms: u64,
+    /// Janela ótima de envio
+    optimal_window: Arc<RwLock<SubmissionWindow>>,
+}
+
+/// 📊 Janela de Submissão Ótima
+#[derive(Clone, Debug)]
+pub struct SubmissionWindow {
+    /// Início da janela (ms antes do bloco)
+    pub start_ms: i64,
+    /// Fim da janela
+    pub end_ms: i64,
+    /// Slot alvo (0 = topo)
+    pub target_slot: u16,
+    /// Probabilidade de inclusão no slot
+    pub inclusion_probability: f64,
+}
+
+/// 🎯 Timing do Bloco
+#[derive(Clone, Debug)]
+pub struct BlockTiming {
+    /// Bloco alvo
+    pub target_block: u64,
+    /// Slot no bloco (0-299)
+    pub block_slot: u16,
+    /// Deadline para envio
+    pub deadline: u64,
+    /// Se será topo do bloco
+    pub will_be_top_of_block: bool,
+    /// Priority fee recomendado (gwei)
+    pub priority_fee_gwei: f64,
+}
+
+/// 📡 Monitor de RTT
+#[derive(Clone, Debug)]
+pub struct RTTMonitor {
+    /// Últimas medições
+    measurements: VecDeque<u64>,
+    /// Média móvel
+    moving_average: f64,
+    /// Jitter (variabilidade)
+    jitter_us: u64,
+}
+
+/// ⚡ Ajuste Dinâmico
+#[derive(Clone, Debug)]
+pub struct DynamicAdjustment {
+    /// Offset de timing (μs)
+    pub timing_offset_us: i64,
+    /// Multiplicador de priority fee
+    pub fee_multiplier: f64,
+    /// Nível de competition
+    pub competition_level: f64,
+}
+
+impl SequencerSync {
+    /// 🚀 Inicializa sincronização
+    pub fn new(protector_url: &str) -> Self {
+        info!("═══════════════════════════════════════════════════════════");
+        info!("⏱️ ORCA SEQUENCER SYNC");
+        info!("🎯 Alvo: Primeiros slots do bloco");
+        info!("📡 RTT Monitor: μs precision");
+        info!("🔗 RPC: {}", protector_url);
+        info!("═══════════════════════════════════════════════════════════");
+        
+        Self {
+            protector_url: protector_url.to_string(),
+            rtt_history: Arc::new(RwLock::new(VecDeque::with_capacity(1000))),
+            current_rtt_us: Arc::new(RwLock::new(0)),
+            rtt_stddev: Arc::new(RwLock::new(0)),
+            measurement_count: Arc::new(RwLock::new(0)),
+            last_block: Arc::new(RwLock::new(0)),
+            last_block_time: Arc::new(RwLock::new(0)),
+            block_time_ms: 2000, // Base: 2 segundos
+            optimal_window: Arc::new(RwLock::new(SubmissionWindow {
+                start_ms: -500,
+                end_ms: -100,
+                target_slot: 0,
+                inclusion_probability: 0.95,
+            })),
+        }
+    }
+    
+    /// 📡 Mede RTT para o sequenciador
+    pub async fn measure_rtt(&self) -> u64 {
+        let start = Instant::now();
+        
+        // Em produção: enviar ping/pong ou eth_blockNumber
+        // Simulação: latência realista
+        let simulated_latency = 50_000u64; // 50ms em μs
+        
+        tokio::time::sleep(Duration::from_micros(simulated_latency / 1000)).await;
+        
+        let elapsed = start.elapsed().as_micros() as u64;
+        
+        // Guardar medição
+        let mut history = self.rtt_history.write().await;
+        history.push_back(elapsed);
+        if history.len() > 1000 {
+            history.pop_front();
+        }
+        drop(history);
+        
+        *self.current_rtt_us.write().await = elapsed;
+        *self.measurement_count.write().await += 1;
+        
+        // Calcular estatísticas
+        self.update_rtt_stats().await;
+        
+        trace!(
+            "[SEQUENCER] 📡 RTT medido: {}μs",
+            elapsed
+        );
+        
+        elapsed
+    }
+    
+    /// 🧮 Atualiza estatísticas de RTT
+    async fn update_rtt_stats(&self) {
+        let history = self.rtt_history.read().await;
+        
+        if history.len() >= 10 {
+            let sum: u64 = history.iter().sum();
+            let avg = sum / history.len() as u64;
+            
+            // Calcular desvio padrão
+            let variance: u64 = history.iter()
+                .map(|&x| {
+                    let diff = if x > avg { x - avg } else { avg - x };
+                    diff * diff
+                })
+                .sum::<u64>() / history.len() as u64;
+            
+            *self.rtt_stddev.write().await = (variance as f64).sqrt() as u64;
+        }
+    }
+    
+    /// 🎯 Calcula timing ótimo para envio
+    pub async fn calculate_optimal_timing(&self) -> BlockTiming {
+        let rtt = *self.current_rtt_us.read().await;
+        let stddev = *self.rtt_stddev.read().await;
+        let last_block = *self.last_block.read().await;
+        
+        // Estimar próximo bloco
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        
+        let next_block = last_block + 1;
+        let time_to_next = self.block_time_ms as i64 - (now as i64 % self.block_time_ms as i64);
+        
+        // Calcular janela de envio ótima
+        // Enviar (RTT + margem) antes do bloco abrir
+        let margin_us = 50_000u64; // 50ms margem de segurança
+        let send_before_us = rtt + stddev + margin_us;
+        
+        // Verificar se ainda estamos na janela
+        let can_be_top = time_to_next * 1000 > send_before_us as i64;
+        
+        // Ajustar priority fee baseado em competition
+        let competition = self.estimate_competition().await;
+        let base_fee = 0.1; // 0.1 gwei Base
+        let priority_fee = base_fee * (1.0 + competition * 5.0); // 1x a 6x
+        
+        BlockTiming {
+            target_block: next_block as u64,
+            block_slot: if can_be_top { 0 } else { 150 },
+            deadline: (now as i64 + time_to_next) as u64,
+            will_be_top_of_block: can_be_top,
+            priority_fee_gwei: priority_fee,
+        }
+    }
+    
+    /// ⏳ Aguarda janela ótima de envio
+    pub async fn await_optimal_window(&self) -> BlockTiming {
+        let timing = self.calculate_optimal_timing().await;
+        let rtt_ms = (*self.current_rtt_us.read().await) / 1000;
+        
+        // Calcular quando enviar
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        
+        let send_at = timing.deadline * 1000 - rtt_ms - 100; // 100ms margem
+        
+        if send_at > now {
+            let wait_ms = send_at - now;
+            trace!("[SEQUENCER] ⏳ Aguardando {}ms para envio", wait_ms);
+            tokio::time::sleep(Duration::from_millis(wait_ms)).await;
+        }
+        
+        timing
+    }
+    
+    /// 🎯 Estima nível de competition
+    async fn estimate_competition(&self) -> f64 {
+        // Em produção: analisar mempool
+        // Simulação: competition aleatória 0.1 - 0.8
+        let rtt = *self.current_rtt_us.read().await;
+        
+        // Mais latência = mais competition (outros bots mais rápidos)
+        if rtt < 30_000 {
+            0.2 // Baixa latência = pouca competition
+        } else if rtt < 100_000 {
+            0.5
+        } else {
+            0.8 // Alta latência = muita competition
+        }
+    }
+    
+    /// 📊 Retorna estatísticas de RTT
+    pub async fn rtt_stats(&self) -> String {
+        let current = *self.current_rtt_us.read().await;
+        let stddev = *self.rtt_stddev.read().await;
+        let count = *self.measurement_count.read().await;
+        
+        let history = self.rtt_history.read().await;
+        let (min, max) = if history.is_empty() {
+            (0, 0)
+        } else {
+            let min: u64 = *history.iter().min().unwrap_or(&0u64);
+            let max: u64 = *history.iter().max().unwrap_or(&0u64);
+            (min, max)
+        };
+        
+        format!(
+            "⏱️ RTT | Atual: {}μs | Min: {}μs | Max: {}μs | σ: {}μs | N: {}",
+            current, min, max, stddev, count
+        )
+    }
+    
+    /// 📈 Estatísticas completas
+    pub async fn stats(&self) -> String {
+        let timing = self.calculate_optimal_timing().await;
+        
+        format!(
+            "🎯 Sequencer | Block: {} | Slot: {} | Top: {} | Priority: {:.2} gwei",
+            timing.target_block,
+            timing.block_slot,
+            if timing.will_be_top_of_block { "✓" } else { "✗" },
+            timing.priority_fee_gwei
+        )
+    }
+}
+
+impl RTTMonitor {
+    /// 🎯 Cria monitor
+    pub fn new() -> Self {
+        Self {
+            measurements: VecDeque::with_capacity(100),
+            moving_average: 0.0,
+            jitter_us: 0,
+        }
+    }
+    
+    /// 📡 Adiciona medição
+    pub fn add_measurement(&mut self, rtt_us: u64) {
+        self.measurements.push_back(rtt_us);
+        
+        if self.measurements.len() > 100 {
+            self.measurements.pop_front();
+        }
+        
+        self.update_stats();
+    }
+    
+    /// 🧮 Atualiza estatísticas
+    fn update_stats(&mut self) {
+        if self.measurements.is_empty() {
+            return;
+        }
+        
+        let sum: u64 = self.measurements.iter().sum();
+        self.moving_average = sum as f64 / self.measurements.len() as f64;
+        
+        // Calcular jitter (desvio padrão)
+        let variance: f64 = self.measurements.iter()
+            .map(|&x| {
+                let diff = x as f64 - self.moving_average;
+                diff * diff
+            })
+            .sum::<f64>() / self.measurements.len() as f64;
+        
+        self.jitter_us = variance.sqrt() as u64;
+    }
+}
+
+impl Default for SubmissionWindow {
+    fn default() -> Self {
+        Self {
+            start_ms: -500,
+            end_ms: -50,
+            target_slot: 0,
+            inclusion_probability: 0.95,
+        }
+    }
+}
+
+use tracing::{info, trace};

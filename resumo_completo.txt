@@ -1,0 +1,812 @@
+================================================================================
+  ORCA MEV BOT — RESUMO COMPLETO DE ARQUITETURA, IMPLEMENTAÇÃO E REPLICAÇÃO
+  Bot de Arbitragem MEV para BASE Mainnet — Capital: 80€ (~0.05 ETH)
+================================================================================
+
+Este documento descreve TODOS os componentes, fórmulas, código, fluxos de
+dados e decisões de design do bot ORCA MEV. Contém todos os detalhes para
+replicação completa do sistema.
+
+================================================================================
+1. VISÃO GERAL E OBJETIVO
+================================================================================
+
+OBJETIVO: Ser um dos top 3 bots de arbitragem da BASE Mainnet.
+CHAIN: BASE Mainnet (Chain ID: 8453)
+RPC: Alchemy Free Tier (WebSocket) + fallback público
+LÍNGUAGEM: Rust (edition 2021) com alloy 0.8
+CAPITAL: 80€ inicial (~0.05 ETH)
+CONTRATO: OrcaExecutor.sol (Solidity ^0.8.19)
+
+ESTRATÉGIAS:
+  - Arbitragem atómica 2-hop e 3-hop triangular
+  - Liquidações Aave/Moonwell
+  - Flash loans Balancer (0% fee)
+  - Backrunning de grandes swaps
+  - JIT liquidity em V3/Aerodrome CL
+  - Long-tail MEV (mid-cap, stale oracle, token launches)
+
+REGRAS FUNDAMENTAIS (invioláveis):
+  1. NUNCA usar f64 em cálculos financeiros — só u128/U256
+  2. NUNCA fazer chamadas RPC dentro do loop de detecção
+  3. SEMPRE usar checked_mul/checked_add para evitar overflow
+  4. SEMPRE simular com eth_call antes de submeter txn real
+  5. Contrato DEVE reverter se lucro < minProfit
+  6. Kill switch a 50% de banca (0.025 ETH)
+  7. Max loss de 10% por sessão de 24h
+  8. Todos os endereços em lowercase para comparações
+  9. Profit-to-gas ratio mínimo de 3:1 antes de executar
+  10. Reserves com mais de 2 blocos de idade: não submeter
+
+================================================================================
+2. ARQUITETURA E FLUXO DE DADOS
+================================================================================
+
+Camadas do sistema:
+
+  CAMADA 1: INFRAESTRUTURA (Rust)
+  PoolCache → ArbGraph → Estratégias → BundleBuilder → NonceManager
+       ↑           ↑            ↑                    ↑
+  WebSocket   Math Engine   Proteções             GasOracle
+  (Sync events) (V2/V3/Stable) (Honeypot, Circuit) (Percentil 10)
+
+  CAMADA 2: SIMULAÇÃO E VALIDAÇÃO
+  eth_call (BlockId::pending()) → Verifica lucro ≥ minProfit
+  → Slippage check → Staleness check (≤ 2 blocos)
+
+  CAMADA 3: EXECUÇÃO ON-CHAIN (Solidity)
+  OrcaExecutor.execute(bytes) → Balancer.flashLoan()
+  → receiveFlashLoan() → _executeHops() (Yul assembly)
+  → _transfer(treasury)
+
+FLUXO COMPLETO:
+  1. WebSocket recebe evento Sync/Swap
+  2. PoolCache atualiza reserves (zero RPC)
+  3. ArbGraph reconstrói (se novo bloco)
+  4. Calcula ciclos 2-hop e 3-hop
+  5. Simula com diferentes flash loan amounts
+  6. Filtra: profit-to-gas ≥ 3:1, não stale, honeypot check
+  7. eth_call com BlockId::pending()
+  8. NonceManager.reserve() obtém nonce atómico
+  9. BundleBuilder cria calldata compacto
+  10. eth_sendRawTransaction (250 CU)
+  11. Contrato: flash loan → swaps → verifica profit
+  12. Lucro para treasury (executor nunca acumula)
+
+================================================================================
+3. ENDEREÇOS NA BASE MAINNET
+================================================================================
+
+Balancer Vault:        0xBA12222222228d8Ba445958a75a0704d566BF2C8
+WETH:                  0x4200000000000000000000000000000000000006
+USDC:                  0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+DAI:                   0x50c5725949A6F0c72E6C4a641F2409A017ebaBdf
+USDbC:                 0xd9aAEc86B65D86f6A7B5B3b78339C7aD4e5716e2
+cbETH:                 0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0Dbc62
+Multicall3:            0xcA11bde05977b3631167028862bE2a173976CA11
+
+Factories:
+  Aerodrome V2:        0x42024DAb8ED9bce086865aCD50831a567Bb4258B
+  Aerodrome Slipstream:0x5e79E80734891BA0907297920A0bA562Bf76632c
+  Uniswap V3:          0x33128a8fC17869897dcE68Ed026d694621f6FDfD
+  Uniswap V2:          0x8909Dc15e40173Ff2D47AfE5aC6E6758472bC7e5
+
+Lending:
+  Moonwell Comptroller:0xfBb21d0380beE3312B33c4353c8936a0F13EF26E
+  Aave V3 Pool:        0xA238Dd80C2594B40d7b3f6bAd1F36c2bcEfaD409
+
+================================================================================
+4. DEPENDÊNCIAS Cargo.toml
+================================================================================
+
+[dependencies]
+alloy = { version = "0.8", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dotenvy = "0.15"
+eyre = "0.6"
+dashmap = "5"
+parking_lot = "0.12"
+smallvec = "1"
+ahash = "0.8"
+async-trait = "0.1"
+num-traits = "0.2"
+tracing-appender = "0.2"
+chrono = "0.4"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+Performance: dashmap (HashMap concorrente sem locks), parking_lot (RwLock
+mais rápido que std), smallvec (vetores em stack), ahash (hasher 3x mais
+rápido que SipHash).
+
+================================================================================
+5. POOL STATE CACHE (src/cache/pool_cache.rs)
+================================================================================
+
+PRINCÍPIO: Zero chamadas RPC durante operação normal. Tudo via eventos.
+
+ESTRUTURA PoolState:
+  address: Address
+  token0, token1: Address
+  reserve0, reserve1: U256
+  fee: u32
+  dex_type: DexType
+  last_update_block: u64
+  last_update_time: u64
+  decimals0, decimals1: u8
+  tvl_eth: U256
+
+MÉTODOS CHAVE:
+  has_liquidity() → reserve0 != 0 && reserve1 != 0
+  is_stale(current_block) → (current_block - last_update) > 2
+  spot_price() → (reserve1_norm * 10^18) / reserve0_norm
+
+PoolCache usa DashMap (não RwLock<HashMap>) — leituras concorrentes sem locks.
+
+ATUALIZAÇÕES:
+  update_sync_event(pool, r0, r1, block):
+    - Chamado pelo listener WebSocket
+    - Atualiza reserves e TVL
+  update_swap_event(pool, sqrt_price_x96, liquidity, block):
+    - Para V3: price = (sqrt_price_x96^2) / 2^192
+    - reserve0 = (liquidity * 10^18) / price
+    - reserve1 = (liquidity * price) / 10^18
+
+MULTICALL3 (inicialização apenas):
+  Selector getReserves() = 0x0902f1ac (4 bytes)
+  1 chamada eth_call para N pools = 26 CU
+
+  decode_getreserves_result(data):
+    reserve0 = U256::from_be_slice(&data[0..32])
+    reserve1 = U256::from_be_slice(&data[32..64])
+    block_timestamp = u32::from_be_bytes(data[92..96])
+
+LIMPEZA: cleanup_stale_pools() remove pools sem updates por > 100 blocos,
+executado a cada 50 blocos.
+
+================================================================================
+6. MATEMÁTICA DOS POOLS
+================================================================================
+
+6.1 UNISWAP V2 / AERODROME CLASSIC (src/math/v2.rs)
+───────────────────────────────────────────────────
+Fórmula: x * y = k
+
+get_amount_out_v2(amount_in, reserve_in, reserve_out):
+  amount_in_with_fee = amount_in * 997
+  numerator = amount_in_with_fee * reserve_out
+  denominator = (reserve_in * 1000) + amount_in_with_fee
+  return numerator / denominator
+
+Fee 0.3% = 997/1000. O 997 representa amount_in após reter 0.3%.
+
+get_amount_in_v2(amount_out, reserve_in, reserve_out):
+  numerator = reserve_in * amount_out * 1000
+  denominator = (reserve_out - amount_out) * 997
+  return (numerator / denominator) + 1
+
+O +1 garante arredondamento para cima.
+
+6.2 AERODROME STABLE sAMM (src/math/stable.rs)
+──────────────────────────────────────────────
+Fórmula: x³y + xy³ = k
+
+get_k_stable(x, y):
+  x2 = x * x          → x²
+  x3 = x2 * x         → x³
+  term1 = x3 * y      → x³y
+  y2 = y * y          → y²
+  y3 = y2 * y         → y³
+  term2 = y3 * x      → xy³
+  k = term1 + term2
+
+get_y_stable(x, k) — Newton-Raphson (255 iterações):
+  Resolver: f(y) = y³x + yx³ - k = 0
+  Derivada: f'(y) = 3y²x + x³
+
+  Guess: y ≈ k / (x³ + 1)
+  Para i em 0..255:
+    y_prev = y
+    y2 = y * y
+    y3 = y2 * y
+    f_y = y3*x + y*x3
+    f_prime_y = 3*y2*x + x3
+    se f_y > k: y = y - (f_y - k) / f_prime_y
+    senão:     y = y + (k - f_y) / f_prime_y
+    se |y - y_prev| ≤ 1: break
+
+get_amount_out_stable(amount_in, reserve_in, reserve_out):
+  k = get_k_stable(reserve_in, reserve_out)
+  new_reserve_in = reserve_in + amount_in
+  new_reserve_out = get_y_stable(new_reserve_in, k)
+  return reserve_out - new_reserve_out  (se > 0, senão 0)
+
+NORMALIZAÇÃO DE DECIMALS (ArbGraph Edge):
+  normalize(amount, decimals):
+    decimals == 18 → amount
+    decimals < 18  → amount * 10^(18-decimals)
+    decimals > 18  → amount / 10^(decimals-18)
+
+  denormalize(amount, decimals): inverso do normalize
+
+6.3 UNISWAP V3 / AERODROME SLIPSTREAM (aproximação)
+───────────────────────────────────────────────────
+Fee multiplier = 10000 - fee/100  (basis points)
+amount_in_with_fee = amount_in * fee_multiplier / 10000
+numerator = amount_in_with_fee * reserve_out
+denominator = reserve_in + amount_in_with_fee
+return numerator / denominator
+
+Reserves virtuais V3:
+  price = (sqrt_price_x96^2) / 2^192
+  reserve0 ≈ (liquidity * 10^18) / price
+  reserve1 ≈ (liquidity * price) / 10^18
+
+================================================================================
+7. GRAFO DE ARBITRAGEM (src/graph/arb_graph.rs)
+================================================================================
+
+ESTRUTURAS:
+  Edge { pool, token_in, token_out, fee, dex_type, reserve_in, reserve_out,
+         decimals_in, decimals_out }
+  ArbPath { hops: SmallVec<[Edge;4]>, start_token, input_amount, output_amount,
+            gross_profit, gas_cost, net_profit, profit_ratio }
+
+SmallVec<[Edge;4]> evita heap allocation para paths ≤ 4 hops.
+
+RECONSTRUÇÃO:
+  rebuild(current_block):
+    Obtém pools ativos (TVL ≥ min, não stale, tem liquidez)
+    Cria Edge bidirecional para cada pool
+
+CICLOS 2-HOP (A → B → A):
+  find_2hop_cycles(A):
+    para cada edge1 (A→B):
+      para cada edge2 (B→A):
+        criar ArbPath [edge1, edge2]
+
+CICLOS 3-HOP (A → B → C → A):
+  find_3hop_cycles(A):
+    para cada edge1 (A→B):
+      para cada edge2 (B→C):
+        skip se C == A
+        para cada edge3 (C→A):
+          unique_id = join(pool_addresses, "-")
+          se unique: adicionar
+
+SIMULAÇÃO DE LUCRO:
+  find_opportunities(start_token, flash_amounts, gas_price, min_ratio):
+    paths = 2-hop + 3-hop
+    para cada path:
+      para cada amount_in:
+        amount_out = amount_in
+        para cada edge: amount_out = edge.get_amount_out(amount_out)
+        se amount_out == 0: abortar
+        gross_profit = amount_out - amount_in
+        gas_used = 150_000 + hops.len() * 80_000
+        gas_cost = gas_price * gas_used
+        se gas_cost ≥ gross_profit: skip
+        profit_ratio = gross_profit / gas_cost
+        se ratio < 3.0: skip
+    ordenar por net_profit decrescente
+    deduplicar por unique_id
+
+================================================================================
+8. PROTEÇÕES
+================================================================================
+
+8.1 HONEYPOT DETECTOR (src/protection/honeypot_detector.rs)
+───────────────────────────────────────────────────────────
+WHITELIST: WETH, USDC, DAI, USDbC, cbETH, wstETH
+
+Processo check(token):
+  se whitelist: Safe
+  verifica cache (TTL 24h)
+  simulate_sell(token):
+    calldata: transfer(address,uint256) selector 0xa9059cbb
+    eth_call para o token
+    se result.is_empty(): Honeypot
+    se erro: SimulationFail
+    senão: Safe
+  guarda no cache
+
+CUSTO: 1 eth_call = 26 CU
+
+8.2 CIRCUIT BREAKER (src/protection/circuit_breaker.rs)
+───────────────────────────────────────────────────────
+Estados: Closed (normal), Open (pausa), HalfOpen (teste)
+
+Regras:
+  5 falhas em 10 min → Open
+  Janela: 600s, Pausa: 1800s
+  Após pausa → HalfOpen
+  1 sucesso em HalfOpen → Closed
+
+8.3 BALANCE TRACKER (src/protection/balance_tracker.rs)
+────────────────────────────────────────────────────────
+Rastreia por estratégia e por pool.
+record_execution(strategy, pool, profit, gas):
+  - Incrementa wins/losses
+  - Atualiza média de gas
+  - Acumula profit_wei e loss_wei
+
+check_session_loss(current_balance):
+  - Se perda ≥ 10% da banca inicial: return true (parar)
+
+best_strategies():
+  - Lista ordenada por total_profit_wei
+  - Usado para auto-priorização
+
+================================================================================
+9. ORÁCULO DE GAS (src/gas/gas_oracle.rs)
+================================================================================
+
+Princípio: Percentil 10 do priority fee dos últimos 20 blocos (não média).
+O p10 é o mínimo aceite — pagar mais é desperdício.
+
+update(priority_fee):
+  Adiciona ao histórico (max 20)
+  Se ≥ 5 entradas:
+    sorted = history ordenado
+    p10_idx = len * 0.1
+    current_fee = sorted[p10_idx]
+
+is_profitable(gross_profit, gas_estimate):
+  gas_cost = gas_estimate * current_fee
+  ratio = gross_profit / gas_cost
+  return ratio ≥ 3.0
+
+================================================================================
+10. ESTRATÉGIAS AVANÇADAS
+================================================================================
+
+10.1 BACKRUNNING (src/strategies/backrun.rs)
+────────────────────────────────────────────
+Config: tvl_threshold_bps = 500 (5% do TVL)
+
+Fluxo:
+  1. Monitora Swap events de todos os pools
+  2. Se amount_in ≥ threshold do pool: candidato
+  3. Estima reserves pós-swap:
+     new_reserve_in = reserve_in + amount_in
+     new_reserve_out = reserve_out - amount_out
+  4. Atualiza cache temporariamente
+  5. Re-executa find_opportunities()
+  6. Envia para canal de alta prioridade
+
+BatchBuilder:
+  Espera 50ms após primeiro evento do bloco
+  Agrupa múltiplas oportunidades numa única txn
+
+10.2 JIT LIQUIDITY (src/strategies/jit_liquidity.rs)
+─────────────────────────────────────────────────────
+Config: min_fee=500, min_tvl=$500k, min_swap=1 ETH
+
+Cálculo:
+  fee_earned = swap_amount * fee_tier / 10000
+  gas_cost = 300_000 * gas_price_gwei / 10^9
+  Executar se: fee_earned > gas_cost * 2
+
+Posição: tick_lower = current_tick - 10, tick_upper = current_tick + 10
+Liquidez proporcional ao volume do swap.
+
+10.3 LONG-TAIL MEV (src/strategies/long_tail.rs)
+──────────────────────────────────────────────────
+MidCapScanner:
+  Monitoriza tokens mid-cap em múltiplos DEXs
+  Divergência > 0.5% (50 bps) = oportunidade
+  
+  find_divergences():
+    para cada token:
+      pools = get_pools_for_token(token)
+      se pools < 2: continue
+      prices = spot_price de cada pool
+      ordenar por preço
+      diff_bps = (max - min) * 10000 / min
+      se diff_bps ≥ 50: oportunidade
+
+LaunchMonitor:
+  Registra PairCreated nos últimos 3 blocos
+  get_recent_launches(block): retorna pares dos últimos 3 blocos
+
+10.4 LIQUIDAÇÕES (src/liquidation/monitor.rs)
+─────────────────────────────────────────────
+Moonwell Comptroller: 0xfBb21d0380beE3312B33c4353c8936a0F13EF26E
+Aave V3 Pool: 0xA238Dd80C2594B40d7b3f6bAd1F36c2bcEfaD409
+
+check_liquidation_profit(debt, collateral, debt_amount, collateral_amount, gas):
+  premium = collateral_amount * 10500 / 10000  (5% premium)
+  gross_profit = premium - debt_amount
+  gas_cost = gas_price * 500_000
+  se gross_profit > gas_cost: oportunidade válida
+
+================================================================================
+11. CONTRATO SOLIDITY (contracts/OrcaExecutor.sol)
+================================================================================
+
+Endereços hardcoded no contrato:
+  BALANCER_VAULT = 0xBA12222222228d8Ba445958a75a0704d566BF2C8
+  WETH = 0x4200000000000000000000000000000000000006
+
+Storage:
+  owner, treasury, killed, authorizedCallers mapping
+  totalExecutions, totalProfit, failedExecutions
+
+Modifiers:
+  onlyOwner: msg.sender == owner
+  notKilled: require(!killed)
+  onlyAuthorized: msg.sender == owner || authorizedCallers[caller]
+
+execute(bytes calldata route):
+  Format route: [blockDeadline:4][minProfit:4][hopCount:1][hop1:25]...
+  
+  Decode:
+    blockDeadline = uint32(bytes4(route[0:4]))
+    minProfit = uint32(bytes4(route[4:8]))
+    hopCount = uint8(route[8])
+    require(hopCount >= 2 && hopCount <= 4)
+    require(route.length >= 9 + hopCount * 25)
+  
+  tokens[0] = WETH
+  amounts[0] = _extractLoanAmount(route)
+  
+  BalancerVault.flashLoan(recipient, tokens, amounts, route)
+
+receiveFlashLoan(tokens, amounts, feeAmounts, userData):
+  require(msg.sender == BALANCER_VAULT)
+  loanAmount = amounts[0]
+  fee = feeAmounts[0]  // = 0 na BASE
+  
+  Decode userData (mesmo formato que route):
+    blockDeadline, minProfit, hopCount
+  
+  balanceBefore = balance(tokens[0])
+  _executeHops(userData, hopCount, tokens[0])
+  balanceAfter = balance(tokens[0])
+  
+  require(balanceAfter > balanceBefore)
+  profit = balanceAfter - balanceBefore
+  minProfitWei = minProfit * 1e9  // compactado: wei / 1e9
+  require(profit >= minProfitWei)
+  
+  repayAmount = loanAmount + fee
+  _transfer(tokens[0], BALANCER_VAULT, repayAmount)
+  
+  treasuryAmount = balanceAfter - repayAmount
+  _transfer(tokens[0], treasury, treasuryAmount)
+  totalProfit += treasuryAmount
+  
+  emit ArbExecuted(block.number, loanAmount, balanceAfter, treasuryAmount, gasleft())
+
+_executeHops(route, hopCount, tokenIn):
+  currentToken = tokenIn
+  para i em 0..hopCount:
+    offset = 9 + i * 25
+    
+    assembly ("memory-safe"):
+      pool = shr(96, calldataload(route.offset + offset))
+      tokenSuffix = shr(224, calldataload(route.offset + offset + 20))
+      dexAndFee = byte(0, calldataload(route.offset + offset + 24))
+    
+    isAerodrome = (dexAndFee & 0x80) != 0
+    feeIndex = dexAndFee & 0x7F
+    // 0=0.05%, 1=0.3%, 2=1%
+    
+    se isAerodrome: _swapAerodrome(pool, currentToken, tokenOut)
+    senão: _swapUniswapV3(pool, currentToken, tokenOut)
+    
+    currentToken = tokenOut
+
+_swapAerodrome(pool, tokenIn, tokenOut):
+  amountIn = balanceOf(tokenIn)
+  // Approve pool via assembly
+  (reserve0, reserve1,) = _getReserves(pool)
+  se tokenIn < tokenOut:
+    amountOut = _getAmountOut(amountIn, reserve0, reserve1)
+    _callSwap(pool, 0, amountOut, address(this))
+  senão:
+    amountOut = _getAmountOut(amountIn, reserve1, reserve0)
+    _callSwap(pool, amountOut, 0, address(this))
+  require(balanceOf(tokenOut) > 0)
+
+_getAmountOut(amountIn, reserveIn, reserveOut):
+  require(reserveIn > 0 && reserveOut > 0)
+  amountInWithFee = amountIn * 997
+  numerator = amountInWithFee * reserveOut
+  denominator = (reserveIn * 1000) + amountInWithFee
+  return numerator / denominator
+
+_getReserves(pool):
+  staticcall getReserves() → (uint112, uint112, uint32)
+
+_callSwap(pool, amount0Out, amount1Out, to):
+  call swap(uint256,uint256,address,bytes)
+
+IMPORTANTE: O contrato NUNCA acumula saldo. Todo o lucro é enviado
+imediatamente para treasury. O executor só serve como intermediário
+atómico para o flash loan.
+
+================================================================================
+12. NONCE MANAGER (src/executor/nonce_manager.rs)
+================================================================================
+
+Estrutura:
+  next_nonce: AtomicU64
+  pending: Mutex<HashMap<u64, PendingTx>>
+  confirmed_nonce: AtomicU64
+  replace_bump_bps: 110  (+10%)
+
+reserve() → u64:
+  next_nonce.fetch_add(1, SeqCst)
+
+register(nonce, tx_hash, priority_fee, max_wait):
+  Cria PendingTx e insere no mapa
+
+check_replace(nonce) → Option<u128>:
+  Se elapsed < max_wait/2: None
+  Senão: new_fee = old_fee * 110 / 100
+
+confirm(nonce):
+  confirmed_nonce.fetch_max(nonce)
+  Remove do mapa pending
+
+================================================================================
+13. BUNDLE BUILDER (src/executor/bundle.rs)
+================================================================================
+
+TxBundle:
+  payloads: Vec<BundlePayload>
+  flash_provider: BalancerV2
+  loan_amount: U256
+  min_profit: U256
+  deadline_block: u64
+
+encode_arb_path(path, executor):
+  Format: [deadline:4][minProfit:4][hopCount:1][hops...]
+  
+  deadline = deadline_block as u32 (big-endian)
+  minProfit = (min_profit / 1_000_000_000) as u32
+  hopCount = path.hops.len() as u8
+  
+  Para cada hop:
+    pool (20 bytes) + token_in suffix (4 bytes) + dex/fee byte
+    
+    dex_flag = 0x80 se Aerodrome/AerodromeStable, senão 0x00
+    fee_index: 500→0, 3000→1, 10000→2
+    byte = dex_flag | fee_index
+
+Cada hop = 25 bytes. Header = 9 bytes. Total = 9 + hops * 25.
+
+================================================================================
+14. MÉTRICAS E AUTO-OPTIMIZAÇÃO (src/metrics/collector.rs)
+================================================================================
+
+HourlyMetrics:
+  timestamp, opportunities_detected, opportunities_executed,
+  opportunities_won, profit_by_strategy (HashMap<String, u128>),
+  success_rate_bps, avg_gas_cost, top_pools
+
+Adaptive min_profit:
+  Se success_rate < 60%: min_profit *= 1.2  (+20%, mais conservador)
+  Se success_rate > 80%: min_profit *= 0.9  (-10%, mais agressivo)
+
+rotate_hour():
+  Guarda métricas da hora anterior (max 48 horas)
+  Reseta contadores
+  Chama adapt_min_profit()
+
+export_json() → String com todas as métricas acumuladas.
+
+================================================================================
+15. ALCHEMY FREE TIER — GESTÃO DE COMPUTE UNITS
+================================================================================
+
+Limite: ~300M compute units por mês
+
+Custos por operação:
+  eth_call: 26 CU
+  eth_getLogs (WebSocket sub): 2 CU por evento recebido
+  eth_getBlockByNumber: 16 CU
+  eth_sendRawTransaction: 250 CU
+  WebSocket subscription ativa: 0 CU (sem eventos)
+
+Regras:
+  - SEMPRE usar WebSocket subscriptions (0 CU ocioso)
+  - NUNCA fazer polling eth_getLogs (16 CU/s = 1.38M CU/dia)
+  - Multicall3 para inicialização: 26 CU em vez de N*26
+  - Cache permanente para: decimals, fee tier, factory address
+  - RPC fallback: https://mainnet.base.org para uptime
+
+================================================================================
+16. ESTRUTURA DE FICHEIROS FINAL
+================================================================================
+
+orca-mev/
+├── Cargo.toml
+├── .env
+├── contracts/
+│   └── OrcaExecutor.sol
+├── src/
+│   ├── main.rs
+│   ├── config.rs
+│   ├── lib.rs
+│   ├── types.rs
+│   ├── cache/
+│   │   ├── mod.rs
+│   │   └── pool_cache.rs
+│   ├── math/
+│   │   ├── mod.rs
+│   │   ├── v2.rs
+│   │   └── stable.rs
+│   ├── graph/
+│   │   ├── mod.rs
+│   │   └── arb_graph.rs
+│   ├── executor/
+│   │   ├── mod.rs
+│   │   ├── bundle.rs
+│   │   └── nonce_manager.rs
+│   ├── discovery/
+│   │   ├── mod.rs
+│   │   └── pool_discovery.rs
+│   ├── liquidation/
+│   │   ├── mod.rs
+│   │   └── monitor.rs
+│   ├── strategies/
+│   │   ├── mod.rs
+│   │   ├── backrun.rs
+│   │   ├── jit_liquidity.rs
+│   │   └── long_tail.rs
+│   ├── protection/
+│   │   ├── mod.rs
+│   │   ├── honeypot_detector.rs
+│   │   ├── circuit_breaker.rs
+│   │   └── balance_tracker.rs
+│   ├── gas/
+│   │   ├── mod.rs
+│   │   └── gas_oracle.rs
+│   └── metrics/
+│       ├── mod.rs
+│       └── collector.rs
+
+================================================================================
+17. STEALTH E ANTI-DETEÇÃO (sistemas descritos, a implementar)
+================================================================================
+
+WalletRotator:
+  - Pool de 3-5 carteiras autorizadas
+  - Rotaciona por oportunidade
+  - Contrato aceita chamadas de qualquer authorizedCaller
+
+Timing Jitter:
+  - Delay aleatório de 0-50ms antes de submeter
+  - Quebra padrões temporais de monitorização
+
+Gas Fingerprint Randomization:
+  - gasLimit entre 95% e 105% do estimado
+  - Variar quebra assinatura por gasLimit exacto
+
+Treasury Separada:
+  - Lucros nunca acumulam no executor
+  - Enviados imediatamente para endereço treasury
+  - Executor mantém saldo visível = 0
+
+================================================================================
+18. ZERO SLIPPAGE (sistemas descritos, a implementar)
+================================================================================
+
+Pre-execution staleness check:
+  - Verificar se last_update_block ≥ current_block - 1
+  - Se > 2 blocos: abortar (reserves stale)
+
+Max impact constraint:
+  - max_input = min(reserve_in * 15 / 100, flash_loan_amount)
+  - Nunca usar > 15% da reserve menor
+
+Exact output mode:
+  - Último hop especifica amountOutMin, não amountIn
+  - Contrato calcula input necessário on-chain
+
+Slippage guard no contrato:
+  require(amountOut >= amountOutMin, "Slippage exceeded")
+
+================================================================================
+19. ATUALIZAÇÕES MAIO 2026 - STRESS TEST & LOGGING TRANSPARENTE
+================================================================================
+
+19.1 MODO STRESS TEST - Top 5 Pools
+  - Reduzido filtro de 56 pools para apenas 5 maiores pools da Base
+  - Pools: WETH/USDC (Uniswap V3), WETH/USDC (Aerodrome), WETH/DAI,
+           cbETH/WETH, USDC/USDbC
+  - Objetivo: Testar se eventos fluem com carga reduzida no RPC
+
+19.2 Last Terminal Log
+  - Ficheiro: logs/last_terminal.log
+  - Captura TUDO do terminal automaticamente
+  - Não perde output mesmo que terminal feche abruptamente
+  - Implementado via segundo WorkerGuard no setup_logging()
+
+19.3 Logging Totalmente Transparente
+  - process_event() agora loga EXATAMENTE o que acontece:
+    ├─ Evento recebido (swap amount, pool, DEX)
+    ├─ Reserves estimadas (amount * 20)
+    ├─ Estado do grafo (pools/tokens/edges)
+    ├─ Análise de flash loan amounts
+    ├─ Resultado: N oportunidades encontradas
+    └─ Se vazio: explica PORQUÊ (sem ciclo, lucro negativo, etc.)
+  - Se lucro: mostra bruto, gas, líquido em ETH e USD
+
+19.4 Correções de Telemetria
+  - Adicionado #[derive(Debug)] a TelemetryCollector
+  - OrcaEngine agora tem set_telemetry() para injeção do collector
+  - process_event() regista tempos reais:
+    ├─ DNA Scan: tempo de processamento do evento
+    ├─ Newton-Raphson: tempo de find_opportunities()
+    └─ Mempool->Sim: tempo de observe/execute
+  - Antes: tudo 0µs | Depois: valores reais em microssegundos
+
+19.5 Stable Math Integrado
+  - ArbGraph::get_amount_out() agora chama get_amount_out_stable()
+    para pools AerodromeStable (CPMM formula)
+  - Fixado encode_arb_path() com executor address no payload
+  - Contrato Solidity atualizado para ler novo formato
+
+19.6 Estrutura de Configuração Reorganizada
+  - src/config/ agora é pasta com:
+    ├─ mod.rs (unificador)
+    ├─ app_config.rs (antigo config.rs)
+    └─ top_pools_base.rs (top 5 pools)
+
+19.7 CORREÇÕES IMPLEMENTADAS MAIO 2026
+  CORREÇÃO 1: Topics de log corretos para cada DEX (Sync, Swap V3, Swap Aero)
+    - Uniswap V3: Sync(0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1)
+    - Aerodrome V2: Sync(0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1)
+    - Uniswap V3: Swap(0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67)
+    - Aerodrome: Swap(0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822)
+
+  CORREÇÃO 2: Timeout 5s -> 60s, threshold 6 -> 3
+    - Aumentado timeout de WebSocket para 60 segundos
+    - Reduzido threshold de eventos para 3 (mais sensível)
+    - Evita timeouts em redes congestionadas
+
+  CORREÇÃO 3: Topics de factory corretos para discovery
+    - Uniswap V2: PairCreated(0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9)
+    - Uniswap V3: PoolCreated(0x783cca1c1917ea5d459fa0efbab959b1b610bf5c2dfd9efb8b9452ed1d0cb0f)
+    - Aerodrome V2: PairCreated(0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9)
+    - Aerodrome Slipstream: PoolCreated(0x783cca1c1917ea5d459fa0efbab959b1b610bf5c2dfd9efb8b9452ed1d0cb0f)
+
+  CORREÇÃO 4: Multicall3 para inicializar reserves
+    - Implementado bootstrap com Multicall3 (0xcA11bde05977b3631167028862bE2a173976CA11)
+    - Selector getReserves(): 0x0902f1ac
+    - Uma única chamada para N pools = 26 CU vs N*26 CU
+    - Decode: reserve0(32), reserve1(32), block_timestamp(4)
+
+  CORREÇÃO 5: Processar Sync events e ligar ao grafo
+    - Sync events agora atualizam PoolCache diretamente
+    - Grafo reconstruído automaticamente quando necessário
+    - Conexão real-time: WebSocket → PoolCache → ArbGraph
+    - Sem polling, zero RPC calls durante operação
+
+  CORREÇÃO 6: Teste de diagnóstico após subscrição
+    - Após cada subscrição bem-sucedida: envia 1 transação de teste
+    - Verifica se eventos chegam corretamente
+    - Log detalhado: "Subscribed to X pools, sent test tx"
+    - Feedback imediato se WebSocket está funcionando
+
+  CORREÇÃO 7: Corrigir erros de compilação (SYNC_TOPIC0 scope)
+    - Movido SYNC_TOPIC0 para escopo global em types.rs
+    - Adicionado #[derive(Debug, Clone, Copy)] a structs necessárias
+    - Fixado import de topics em event listeners
+    - Compilação limpa em Rust edition 2021
+
+================================================================================
+FIM DO DOCUMENTO
+================================================================================

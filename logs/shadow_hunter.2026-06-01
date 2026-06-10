@@ -1,0 +1,46 @@
+2026-06-01T06:41:43.579818Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T06:41:50.351989Z  WARN ThreadId(08) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:43:51.168372Z  WARN ThreadId(12) orca_mev::artemis::collector_v2: ⚠️ [LATENCY] RTT elevado: 1342ms! Competitividade MEV em risco.
+2026-06-01T06:45:04.984363Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T06:45:12.331085Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:46:50.321319Z  WARN ThreadId(10) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:48:13.348098Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T06:48:20.438594Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:50:12.393603Z  WARN ThreadId(08) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:51:50.329518Z  WARN ThreadId(06) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:53:20.441179Z  WARN ThreadId(09) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:55:12.403310Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:56:50.333651Z  WARN ThreadId(08) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T06:58:20.455235Z  WARN ThreadId(09) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:00:12.390813Z  WARN ThreadId(10) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:01:50.318869Z  WARN ThreadId(11) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:03:20.439359Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:05:12.392725Z  WARN ThreadId(09) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:06:50.317514Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:08:20.438373Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:10:12.305560Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:11:50.323281Z  WARN ThreadId(06) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:12:49.995523Z  WARN ThreadId(12) orca_mev::artemis::collector_v2: ⚠️ [LATENCY] RTT elevado: 162ms! Competitividade MEV em risco.
+2026-06-01T07:13:20.436528Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:15:12.291451Z  WARN ThreadId(10) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:16:50.318570Z  WARN ThreadId(08) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:18:20.434818Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:20:12.292917Z  WARN ThreadId(10) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:21:26.997951Z  WARN ThreadId(13) orca_mev::artemis::collector_v2: ⚠️ [LATENCY] RTT elevado: 209ms! Competitividade MEV em risco.
+2026-06-01T07:21:42.229536Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T07:21:48.847299Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:21:50.324874Z  WARN ThreadId(08) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:22:45.950023Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T07:22:52.816232Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T07:23:20.440240Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T23:20:24.189338Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T23:20:34.184283Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T23:31:36.066404Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T23:31:44.756541Z  WARN ThreadId(13) orca_mev::artemis::collector_v2: ⚠️ [LATENCY] RTT elevado: 166ms! Competitividade MEV em risco.
+2026-06-01T23:31:45.477062Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T23:33:03.503171Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T23:33:13.476735Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T23:33:39.199527Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T23:33:48.192274Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.
+2026-06-01T23:35:13.581607Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-06-01T23:35:24.942687Z  WARN ThreadId(13) orca_mev::discovery::pool_discovery: [AGRESSIVO] ❌ Discovery por eventos vazio. Aplicando fallback whale pools.

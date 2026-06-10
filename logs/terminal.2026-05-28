@@ -1,0 +1,40 @@
+2026-05-28T23:17:56.409281Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-05-28T23:17:56.778264Z  WARN ThreadId(01) orca_mev::provider: ⚠️ RPC falhou: HTTP error: 429 Too Many Requests
+2026-05-28T23:17:57.174090Z  WARN ThreadId(01) orca_mev::provider: ⚠️ RPC falhou: HTTP error: 301 Moved Permanently
+2026-05-28T23:18:50.408760Z  WARN ThreadId(01) orca_engine: 🔴 [BOOTSTRAP] 1 pools com reserves <1000 (possível erro de decode)
+2026-05-28T23:18:50.729817Z  WARN ThreadId(10) orca_mev::artemis::collector_v2: ⚠️ [LATENCY] RTT elevado: 225ms! Competitividade MEV em risco.
+2026-05-28T23:18:51.982513Z  WARN ThreadId(02) orca_mev::artemis::collector_v2: [DIAGNÓSTICO] Erro ao testar Sync filter: server returned an error response: error code -32000: internal error
+2026-05-28T23:18:52.307828Z  WARN ThreadId(10) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.318185Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.319901Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.321343Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.322683Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.324032Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.325302Z  WARN ThreadId(10) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:52.326790Z  WARN ThreadId(10) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.245451Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.246725Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.248721Z  WARN ThreadId(12) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.250531Z  WARN ThreadId(12) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.252003Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.253379Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.254764Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.256198Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.257561Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.258921Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.260311Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.261673Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:53.388787Z  WARN ThreadId(11) orca_mev::discovery::pool_discovery: [DISCOVERY] Erro scan blocks 46610441-46610450: server returned an error response: error code -32000: internal error
+2026-05-28T23:18:54.326319Z  WARN ThreadId(02) orca_mev::discovery::pool_discovery: [DISCOVERY] Erro scan blocks 46610461-46610470: server returned an error response: error code -32000: internal error
+2026-05-28T23:18:55.232806Z  WARN ThreadId(11) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.235111Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.236551Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.237957Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.239359Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.240737Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.242128Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.243627Z  WARN ThreadId(02) orca_mev::graph::arb_graph: [GRAPH] Detetado Address::ZERO em tokens — pools podem não ter token0/token1 preenchidos
+2026-05-28T23:18:55.267578Z  WARN ThreadId(12) orca_mev::discovery::pool_discovery: [DISCOVERY] Erro scan blocks 46610481-46610490: server returned an error response: error code -32000: internal error
+2026-05-28T23:29:42.319438Z  WARN ThreadId(01) orca_mev::provider: ⚠️ [AUTH] Prefixo da chave (TkEd) difere do esperado (nFAt). Verifica o .env!
+2026-05-28T23:29:42.689102Z  WARN ThreadId(01) orca_mev::provider: ⚠️ RPC falhou: HTTP error: 429 Too Many Requests
+2026-05-28T23:29:43.090891Z  WARN ThreadId(01) orca_mev::provider: ⚠️ RPC falhou: HTTP error: 301 Moved Permanently
