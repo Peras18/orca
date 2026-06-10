@@ -20,6 +20,7 @@ pub struct CLPool {
 }
 
 /// Monitor de oportunidades JIT
+#[derive(Debug)]
 pub struct JITMonitor {
     /// Fee tier mínimo para considerar
     min_fee_bps: u32,

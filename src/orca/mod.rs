@@ -38,8 +38,13 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 use crate::discovery::PoolDiscoveryEngine;
 
+use crate::strategies::long_tail::{MidCapScanner, LaunchMonitor};
+use crate::strategies::jit_liquidity::{JITMonitor, CLPool};
 /// WETH na Base — usado como token de partida no grafo (SwapV3 pode expor `token_in` nulo no grafo).
 const WETH: Address = address!("4200000000000000000000000000000000000006");
+const USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
+const CBETH: Address = address!("2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEC22");
+const AERO: Address = address!("940181a94A35A4569E4529A3CDfB74e38FD98631");
 
 /// 🐋 ORCA Engine - Motor principal de execução
 #[derive(Clone, Debug)]
@@ -100,6 +105,9 @@ pub struct OrcaEngine {
     honeypot: Arc<crate::security::honeypot_filter::HoneypotFilter>,
     curvature: Arc<RwLock<crate::prediction::CurvatureDetector>>,
     topology: Arc<RwLock<crate::graph::PersistentTopology>>,
+    midcap_scanner: Arc<MidCapScanner>,
+    launch_monitor: Arc<LaunchMonitor>,
+    jit_monitor: Arc<JITMonitor>,
 }
 
 /// ⚙️ Configuração do ORCA
@@ -170,6 +178,7 @@ impl OrcaEngine {
         let tracker = PerformanceTracker::new();
         let audit = ForensicAudit::new("audit_results_mainnet.log");
         let pool_cache = PoolCache::new();
+        let pool_cache_for_midcap = pool_cache.clone();
         let arb_graph = ArbGraph::new(pool_cache.clone(), U256::from(10).pow(U256::from(19)));
 
         // 💰 Inicializar BankrollManager com capital inicial em wei
@@ -225,6 +234,9 @@ impl OrcaEngine {
             honeypot: Arc::new(crate::security::honeypot_filter::HoneypotFilter::new()),
             curvature: Arc::new(RwLock::new(crate::prediction::CurvatureDetector::new())),
             topology: Arc::new(RwLock::new(crate::graph::PersistentTopology::new())),
+            midcap_scanner: Arc::new(MidCapScanner::new(pool_cache_for_midcap)),
+            launch_monitor: Arc::new(LaunchMonitor::new()),
+            jit_monitor: Arc::new(JITMonitor::new()),
         }
     }
 
@@ -672,6 +684,28 @@ impl Strategy for OrcaEngine {
                     info!("[DEBUG] large_swap pool={:?} needs_bootstrap={} in_cache={}", 
                         swap.pool, needs_bootstrap, self.pool_cache.contains(&swap.pool));
                     info!("[LARGE-SWAP] pool={:?} amount_in={}", swap.pool, swap.amount_in);
+                    // ── JIT: avaliar oportunidade just-in-time para pools V3 ──
+                    if swap.dex_type == crate::contracts::DexType::UniswapV3 {
+                        if let Some(pool_state) = self.pool_cache.get(&swap.pool) {
+                            if pool_state.sqrt_price_x96.is_some() && pool_state.liquidity.is_some() {
+                                let cl_pool = CLPool {
+                                    address: swap.pool,
+                                    token0: pool_state.token0,
+                                    token1: pool_state.token1,
+                                    fee: pool_state.fee,
+                                    tick: pool_state.tick.unwrap_or(0),
+                                    liquidity: pool_state.liquidity.unwrap_or(0),
+                                    sqrt_price_x96: U256::from(pool_state.sqrt_price_x96.unwrap_or(0)),
+                                    tvl_usd: pool_state.tvl_eth.to::<u128>() as f64 / 1e18 * 1800.0,
+                                };
+                                let swap_eth = swap.amount_in.to::<u128>() as f64 / 1e18;
+                                let gas_gwei = 0.1f64;
+                                if let Some(jit_opp) = self.jit_monitor.evaluate_opportunity(&cl_pool, swap_eth, gas_gwei) {
+                                    info!("[JIT] 🎯 pool={:?} fee={:.6}ETH gas={:.6}ETH", jit_opp.pool, jit_opp.expected_fee_eth, jit_opp.gas_cost_eth);
+                                }
+                            }
+                        }
+                    }
                     // ── BACKRUN: atualizar reserves com estado pós-swap imediato ──
                     if swap.token_in != Address::ZERO && swap.token_out != Address::ZERO {
                         if let Some(mut pool) = self.pool_cache.get(&swap.pool) {
@@ -696,6 +730,8 @@ impl Strategy for OrcaEngine {
                         let pool_addr = swap.pool;
                         let cache = self.pool_cache.clone();
                         let discovery = self.discovery.clone();
+                        let launch_mon_ref = self.launch_monitor.clone();
+                        let midcap_ref = self.midcap_scanner.clone();
                         tokio::spawn(async move {
                             let q96 = U256::from(1u128) << 96;
                             // token0/token1
@@ -759,6 +795,10 @@ impl Strategy for OrcaEngine {
                             if reserve0 < min_reserve && reserve1 < min_reserve { return; }
                             // Para V3: rejeitar se sqrt_price implica preço absurdo (fee harcoded 3000 é proxy)
                             cache.insert(state);
+                            // Alimentar launch_monitor e midcap_scanner com pool nova
+                            launch_mon_ref.on_pair_created(pool_addr, 0);
+                            midcap_ref.track_token(token0);
+                            midcap_ref.track_token(token1);
                             let disc = discovery.clone();
                             tokio::spawn(async move {
                                 disc.register_pool_otf(
@@ -905,13 +945,27 @@ impl Strategy for OrcaEngine {
                 let predicted_gas = self.kalman_gas.write().await.update(observed_gas);
                 let gas_price_wei = U256::from((predicted_gas * 1_000_000_000.0) as u64);
                 let t = std::time::Instant::now();
-                let opps = graph.find_opportunities_with_priorities(
-                    WETH,
-                    &flash_amounts,
-                    gas_price_wei,
-                    1.2,
-                    Some(&pool_priorities),
-                );
+                // Multi-token start: WETH + USDC + cbETH + AERO + tokens divergentes (long-tail)
+                let divergences = self.midcap_scanner.find_divergences();
+                let mut extra_tokens: Vec<Address> = divergences.iter().map(|d| d.token).collect();
+                extra_tokens.dedup();
+                let recent_launches = self.launch_monitor.get_recent_launches(swap.block_number);
+                extra_tokens.extend(recent_launches);
+
+                let mut opps = Vec::new();
+                let mut start_tokens = vec![WETH, USDC, CBETH, AERO];
+                start_tokens.extend(extra_tokens);
+                for start_tok in start_tokens {
+                    let tok_opps = graph.find_opportunities_with_priorities(
+                        start_tok,
+                        &flash_amounts,
+                        gas_price_wei,
+                        1.2,
+                        Some(&pool_priorities),
+                    );
+                    opps.extend(tok_opps);
+                }
+                opps.sort_by(|a, b| b.net_profit.cmp(&a.net_profit));
                 let opps: Vec<_> = opps.into_iter().filter(|opp| {
                     let tokens: Vec<_> = opp.hops.iter().map(|h| h.token_in).collect();
                     self.honeypot.is_path_safe(&tokens)

@@ -13,6 +13,7 @@ use crate::cache::pool_cache::PoolCache;
 use crate::contracts::DexType;
 
 /// Scanner de tokens mid-cap (1M-50M market cap)
+#[derive(Debug)]
 pub struct MidCapScanner {
     pool_cache: PoolCache,
     /// Tokens mid-cap monitorizados
@@ -105,6 +106,7 @@ pub struct PriceDivergence {
 }
 
 /// Monitor de token launches
+#[derive(Debug)]
 pub struct LaunchMonitor {
     /// Pares criados nos últimos 3 blocos
     recent_pairs: RwLock<Vec<(Address, u64)>>, // (pool, block)
