@@ -40,6 +40,7 @@ use crate::discovery::PoolDiscoveryEngine;
 
 use crate::strategies::long_tail::{MidCapScanner, LaunchMonitor};
 use crate::strategies::jit_liquidity::{JITMonitor, CLPool};
+use crate::math::transfer_entropy::TransferEntropyDetector;
 /// WETH na Base — usado como token de partida no grafo (SwapV3 pode expor `token_in` nulo no grafo).
 const WETH: Address = address!("4200000000000000000000000000000000000006");
 const USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
@@ -108,6 +109,7 @@ pub struct OrcaEngine {
     midcap_scanner: Arc<MidCapScanner>,
     launch_monitor: Arc<LaunchMonitor>,
     jit_monitor: Arc<JITMonitor>,
+    transfer_entropy: Arc<RwLock<TransferEntropyDetector>>,
 }
 
 /// ⚙️ Configuração do ORCA
@@ -237,6 +239,7 @@ impl OrcaEngine {
             midcap_scanner: Arc::new(MidCapScanner::new(pool_cache_for_midcap)),
             launch_monitor: Arc::new(LaunchMonitor::new()),
             jit_monitor: Arc::new(JITMonitor::new()),
+            transfer_entropy: Arc::new(RwLock::new(TransferEntropyDetector::new(20))),
         }
     }
 
@@ -923,6 +926,23 @@ impl Strategy for OrcaEngine {
                         }
                     }
                 }
+                // Transfer Entropy: alimentar preço atual e boost pools causalmente ligados
+                {
+                    let price_proxy = if !swap.amount_out.is_zero() {
+                        swap.amount_in.to::<u128>() as f64 / swap.amount_out.to::<u128>().max(1) as f64
+                    } else { 0.0 };
+                    if price_proxy > 0.0 {
+                        let mut te = self.transfer_entropy.write().await;
+                        te.record_price(swap.pool, price_proxy);
+                        te.update_causality();
+                        let caused = te.get_caused_pools(swap.pool);
+                        for (caused_pool, te_score) in caused.iter().take(5) {
+                            let boost = te_score * 3000.0;
+                            pool_priorities.entry(*caused_pool).and_modify(|v| *v += boost).or_insert(boost);
+                        }
+                    }
+                }
+
                 // Garantir mínimo de 0.01 ETH (10^16 wei) — abaixo disso a divisão AMM trunca para zero
                 const MIN_FLASH_WEI: u128 = 10_000_000_000_000_000u128; // 0.01 ETH
                 let flash_amounts = {
