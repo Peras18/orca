@@ -1050,7 +1050,7 @@ impl Strategy for OrcaEngine {
                             if let Some(last) = opp.hops.last() { parts.push(format!("{:?}", last.token_out)); }
                             parts.join("→")
                         };
-                        // Filtrar opps com pools não verificados (reserves sintéticas)
+                        // Filtrar: só pools com reserves verificadas via getReserves() real
                         let all_verified = opp.hops.iter().all(|h| {
                             self.pool_cache.get(&h.pool).map(|p| p.reserve_verified).unwrap_or(false)
                         });

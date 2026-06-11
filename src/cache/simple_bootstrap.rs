@@ -44,7 +44,7 @@ const PRIORITY_BOOTSTRAP: [(Address, DexType); 3] = [
 
 /// Lista principal (20 pools V2-compatible verificadas via `getReserves` na Base).
 /// Prioridades repetidas no topo para garantir ordem; `merged_bootstrap_targets` dedupe.
-const MAIN_BOOTSTRAP_POOLS: [(Address, DexType); 23] = [
+const MAIN_BOOTSTRAP_POOLS: [(Address, DexType); 43] = [
     (
         address!("0xa1d2ee6212d4375f154393e59895a5d27859c4e4"),
         DexType::Aerodrome,
@@ -128,6 +128,26 @@ const MAIN_BOOTSTRAP_POOLS: [(Address, DexType); 23] = [
     (address!("0xc4838fbeef72ba0719a4c4f1efeec68991b74a20"), DexType::UniswapV3),
     (address!("0x9187c24a3a81618f07a9722b935617458f532737"), DexType::UniswapV3),
     (address!("0xf39b8ad8b194a56291d55b3a4c690b2557b5b8c9"), DexType::Aerodrome), // USDC/0xa69f80
+    (address!("0x7ec6c9d993d9832aa654593f2dbc21303650bc6c"), DexType::Aerodrome),
+    (address!("0xa213a86c7f279ee13e0b45642483a00f917821c2"), DexType::Aerodrome),
+    (address!("0xa135b59fe221c0c8d441294f97f96fbc37bc9fbe"), DexType::Aerodrome),
+    (address!("0x0ab02e160f0df68dc049b012c514857306960eae"), DexType::Aerodrome),
+    (address!("0x26e54b556c6ec78bc6d8b9ca9c82ed8c548ccba6"), DexType::Aerodrome),
+    (address!("0x782d7c494d5ddc20c246a82ac8fe277e2728d002"), DexType::Aerodrome),
+    (address!("0x3f413fccaea59b8053d605aea7ae847c02ed5d95"), DexType::Aerodrome),
+    (address!("0x659be70647b0f63217d60e077f4417b1ecc65064"), DexType::Aerodrome),
+    (address!("0x01271a205e3f37cbfc9b353170d726060e193c0d"), DexType::Aerodrome),
+    (address!("0xee8690f5c25146ee3f163b399099a3e28e59b6a3"), DexType::Aerodrome),
+    (address!("0xbe4c36b9542610df83ca690c8b5bc53bbbc5d542"), DexType::Aerodrome),
+    (address!("0x7f1a5b66ba3bb56c4b68cfc353a5e041c9763a4c"), DexType::Aerodrome),
+    (address!("0x2400e1e764556e19e28bc9e3c685e4104bf152f8"), DexType::Aerodrome),
+    (address!("0x0392b12a1ceb0cd13af5ea448cf5586ea609852d"), DexType::Aerodrome),
+    (address!("0xf4d97f2da56e8c3098f3a8d538db630a2606a024"), DexType::Aerodrome),
+    (address!("0x46d398a5b33709877f50c8918a7ee96f1be1d7dd"), DexType::Aerodrome),
+    (address!("0x9520e1a3bfd86da6c1e9e5ee4b9c2f11c413358f"), DexType::Aerodrome),
+    (address!("0x6b0f53cbd9272d8117e9535fe25371dedf39a1be"), DexType::Aerodrome),
+    (address!("0x3693022bd390e147d8dd89a05403c80ff21dd64b"), DexType::Aerodrome),
+    (address!("0x443d60c2f5cc88a955bee631fc7fad08df7db3a0"), DexType::Aerodrome),
 ];
 
 /// Pools Uniswap V3 para bootstrap (WETH/USDC com diferentes fees)

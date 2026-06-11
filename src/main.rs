@@ -205,6 +205,11 @@ async fn main() -> eyre::Result<()> {
     }
 
     // Salvar cache atualizado
+    // Carregar cache de pools descobertos anteriormente
+    match discovery_engine.load_from_cache().await {
+        Ok(n) => info!("[CACHE] {} pools carregados do cache persistente", n),
+        Err(e) => warn!("[CACHE] Erro ao carregar cache: {}", e),
+    }
     if let Err(e) = discovery_engine.save_to_cache().await {
         warn!("[CACHE] Erro ao salvar cache: {}", e);
     } else {
