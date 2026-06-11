@@ -481,7 +481,7 @@ async fn main() -> eyre::Result<()> {
     // ═══════════════════════════════════════════════════════════
     let mut orca_config = orca_mev::orca::OrcaConfig::default();
     orca_config.dry_run = app_config.dry_run;
-    let mut orca_engine = orca_mev::orca::OrcaEngine::new(orca_config, discovery_engine.clone());
+    let mut orca_engine = orca_mev::orca::OrcaEngine::new(orca_config, discovery_engine.clone()).await;
     orca_engine.set_shared_pool_cache((*pool_cache).clone());
     let shared_liquidity_count = pool_cache.count_pools_with_reserves();
     info!(

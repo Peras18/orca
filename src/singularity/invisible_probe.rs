@@ -102,14 +102,24 @@ impl InvisibleProber {
         let (cmd_tx, _) = mpsc::channel(1000);
         
         // Nós Alchemy (exemplo - em produção carregar de config)
-        let nodes = vec![
-            "https://base-mainnet.g.alchemy.com/v2/key1".to_string(),
-            "https://base-mainnet.g.alchemy.com/v2/key2".to_string(),
-            "https://base-mainnet.g.alchemy.com/v2/key3".to_string(),
-            "https://base.llamarpc.com".to_string(),
-            "https://base.meowrpc.com".to_string(),
-            "https://1rpc.io/base".to_string(),
-        ];
+        // Carregar RPCs do env + fallbacks públicos gratuitos
+        let mut nodes: Vec<String> = std::env::var("RPC_HTTP_URLS")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .collect();
+        // Fallbacks públicos gratuitos sempre disponíveis
+        for fallback in &[
+            "https://base.llamarpc.com",
+            "https://base.meowrpc.com",
+            "https://1rpc.io/base",
+            "https://base.gateway.tenderly.co/3keLiPzUyOTAczrG9yoUfh",
+        ] {
+            if !nodes.contains(&fallback.to_string()) {
+                nodes.push(fallback.to_string());
+            }
+        }
         
         let mut latency_map = HashMap::new();
         for node in &nodes {

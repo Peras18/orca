@@ -7,13 +7,13 @@
 pub mod sequencer_heartbeat;
 pub mod atomic_state_lock;
 // pub mod bridge_shadow_predictor; // TODO: Implementar
-// pub mod invisible_prober; // TODO: Implementar
+pub mod invisible_probe;
 pub mod shadow_speculator;
 
 pub use sequencer_heartbeat::SequencerHeartbeatMonitor;
 pub use atomic_state_lock::AtomicStateLock;
 // pub use bridge_shadow_predictor::BridgeShadowPrediction;
-// pub use invisible_prober::InvisibleProber;
+pub use invisible_probe::InvisibleProber as InvisibleProbe;
 
 pub use shadow_speculator::{
     ShadowSpeculator, ShadowMempool, ShadowPendingTx, VirtualPoolState,

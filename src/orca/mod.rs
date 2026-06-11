@@ -41,6 +41,8 @@ use crate::discovery::PoolDiscoveryEngine;
 use crate::strategies::long_tail::{MidCapScanner, LaunchMonitor};
 use crate::strategies::jit_liquidity::{JITMonitor, CLPool};
 use crate::math::transfer_entropy::TransferEntropyDetector;
+use crate::singularity::InvisibleProbe;
+use crate::singularity::SequencerHeartbeatMonitor;
 /// WETH na Base — usado como token de partida no grafo (SwapV3 pode expor `token_in` nulo no grafo).
 const WETH: Address = address!("4200000000000000000000000000000000000006");
 const USDC: Address = address!("833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
@@ -110,6 +112,8 @@ pub struct OrcaEngine {
     launch_monitor: Arc<LaunchMonitor>,
     jit_monitor: Arc<JITMonitor>,
     transfer_entropy: Arc<RwLock<TransferEntropyDetector>>,
+    invisible_probe: Arc<InvisibleProbe>,
+    sequencer_heartbeat: Arc<SequencerHeartbeatMonitor>,
 }
 
 /// ⚙️ Configuração do ORCA
@@ -149,7 +153,7 @@ impl Default for OrcaConfig {
 
 impl OrcaEngine {
     /// 🚀 Inicializa ORCA Engine
-    pub fn new(config: OrcaConfig, discovery: Arc<PoolDiscoveryEngine>) -> Self {
+    pub async fn new(config: OrcaConfig, discovery: Arc<PoolDiscoveryEngine>) -> Self {
         let safety_min_profit_eth = if config.dry_run { 0.00005 } else { 0.0001 };
         info!("═══════════════════════════════════════════════════════════");
         info!("🐋 PROJETO ORCA - Base Mainnet MEV Engine");
@@ -240,6 +244,8 @@ impl OrcaEngine {
             launch_monitor: Arc::new(LaunchMonitor::new()),
             jit_monitor: Arc::new(JITMonitor::new()),
             transfer_entropy: Arc::new(RwLock::new(TransferEntropyDetector::new(20))),
+            invisible_probe: Arc::new(InvisibleProbe::new().await),
+            sequencer_heartbeat: Arc::new(SequencerHeartbeatMonitor::new().await),
         }
     }
 
@@ -273,6 +279,18 @@ impl OrcaEngine {
         let graph = ArbGraph::new(shared_pool_cache, U256::from(10).pow(U256::from(19)));
         self.arb_graph = Arc::new(RwLock::new(graph));
         info!("[ORCA] 🔗 Pool cache partilhado injetado no motor de arbitragem");
+        // Arrancar InvisibleProbe em background — seleciona RPC mais rápido continuamente
+        let probe = self.invisible_probe.clone();
+        tokio::spawn(async move {
+            probe.start_continuous_probing().await;
+        });
+        info!("[INVISIBLE-PROBE] 👁️ Sonda de nós iniciada em background");
+        // Arrancar SequencerHeartbeat em background — aprende timing do sequencer
+        let heartbeat = self.sequencer_heartbeat.clone();
+        tokio::spawn(async move {
+            heartbeat.start_monitoring().await;
+        });
+        info!("[HEARTBEAT] 💓 Monitor de sequencer iniciado em background");
     }
 
     /// 🔍 Valida oportunidade via simulação local
@@ -323,8 +341,12 @@ impl OrcaEngine {
             .build_protected_bundle(&opportunity, &sim_result)
             .await?;
 
-        // 4. Aguardar timing ótimo
+        // 4. Aguardar timing ótimo — combinar SequencerSync + HeartbeatMonitor
         let timing = self.sequencer.await_optimal_window().await;
+        // Heartbeat: esperar janela ótima de submissão baseada em RTT aprendido
+        let next_block = self.last_observed_block.load(Ordering::Relaxed) + 1;
+        let send_window = self.sequencer_heartbeat.calculate_optimal_send_time(next_block).await;
+        self.sequencer_heartbeat.wait_for_send_window(&send_window).await;
 
         // 5. Enviar via Protector RPC
         info!(
@@ -573,6 +595,7 @@ impl Strategy for OrcaEngine {
             MevEvent::Swap(swap) => {
                 self.last_observed_block
                     .store(swap.block_number, Ordering::Relaxed);
+                let current_block = swap.block_number;
 
                 // ── Deduplicação: cada log processado no máximo 1 vez ──
                 {
@@ -586,7 +609,6 @@ impl Strategy for OrcaEngine {
                         return Ok(());
                     }
                     // Limpar entradas com mais de 1 bloco de idade (TTL)
-                    let current_block = swap.block_number;
                     seen.retain(|_, block| *block >= current_block.saturating_sub(1));
                     seen.insert(key, current_block);
                 }
@@ -677,7 +699,6 @@ impl Strategy for OrcaEngine {
                     .on_swap_received(&format!("{:?}", swap.pool));
 
                 // Throttle: swaps pequenos só 1x por bloco; swaps grandes calculam sempre
-                let current_block = swap.block_number;
                 let last = self.last_processed_block.load(Ordering::Relaxed);
                 let is_large_swap = swap.amount_in >= U256::from(1_000_000_000_000_000_000u128); // >= 1 ETH
                 if is_large_swap {
