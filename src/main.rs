@@ -535,6 +535,62 @@ async fn main() -> eyre::Result<()> {
     // NÃO criar outro consumer aqui — isso causaria "channel lagged"
 
     // Run engine
+    // ── Horário de operação: 07h45 - 21h30 PT ──
+    {
+        use chrono::{Local, Timelike};
+        let now = Local::now();
+        let hour = now.hour();
+        let minute = now.minute();
+        let minutes_now = hour * 60 + minute;
+        let start_minutes = 7 * 60 + 45;  // 07h45
+        let stop_minutes = 21 * 60 + 30;  // 21h30
+        if minutes_now < start_minutes || minutes_now >= stop_minutes {
+            info!("[SCHEDULE] Fora do horário de operação (07h45-21h30 PT). A aguardar...");
+            let wait_mins = if minutes_now < start_minutes {
+                start_minutes - minutes_now
+            } else {
+                (24 * 60 - minutes_now) + start_minutes
+            };
+            tokio::time::sleep(tokio::time::Duration::from_secs(wait_mins as u64 * 60)).await;
+        }
+    }
+
+    // ── Heartbeat Discord a cada hora ──
+    {
+        let discord_hb = Arc::new(orca_mev::notifications::DiscordNotifier::new(
+            &std::env::var("DISCORD_WEBHOOK").unwrap_or_default()
+        ));
+        let pool_cache_hb = pool_cache.clone();
+        let opp_log_path = "logs/opportunities.csv".to_string();
+        tokio::spawn(async move {
+            let mut last_opps = 0u64;
+            let mut last_profit = 0.0f64;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+                // Ler stats do CSV
+                let content = tokio::fs::read_to_string(&opp_log_path).await.unwrap_or_default();
+                let lines: Vec<&str> = content.lines().skip(1).collect();
+                let total_opps = lines.len() as u64;
+                let total_profit: f64 = lines.iter()
+                    .filter_map(|l| l.split(',').nth(8).and_then(|v| v.parse::<f64>().ok()))
+                    .sum();
+                let hour_opps = total_opps - last_opps;
+                let hour_profit = total_profit - last_profit;
+                let block = pool_cache_hb.len() as u64;
+                discord_hb.notify_heartbeat(block, hour_opps, hour_profit).await;
+                last_opps = total_opps;
+                last_profit = total_profit;
+                // Verificar horário de paragem
+                use chrono::{Local, Timelike};
+                let now = Local::now();
+                if now.hour() * 60 + now.minute() >= 21 * 60 + 30 {
+                    discord_hb.notify_stop(total_opps, total_profit, 0.0).await;
+                    break;
+                }
+            }
+        });
+    }
+
     info!("🚀 Artemis + Apex-Predator engines running - DOMINATING Base Mainnet...");
     engine.run().await.map_err(|e| {
         error!("Engine failure: {}", e);

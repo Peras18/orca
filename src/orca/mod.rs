@@ -42,6 +42,7 @@ use crate::strategies::long_tail::{MidCapScanner, LaunchMonitor};
 use crate::strategies::jit_liquidity::{JITMonitor, CLPool};
 use crate::math::transfer_entropy::TransferEntropyDetector;
 use crate::singularity::InvisibleProbe;
+use crate::notifications::DiscordNotifier;
 use crate::singularity::SequencerHeartbeatMonitor;
 /// WETH na Base — usado como token de partida no grafo (SwapV3 pode expor `token_in` nulo no grafo).
 const WETH: Address = address!("4200000000000000000000000000000000000006");
@@ -114,6 +115,7 @@ pub struct OrcaEngine {
     transfer_entropy: Arc<RwLock<TransferEntropyDetector>>,
     invisible_probe: Arc<InvisibleProbe>,
     sequencer_heartbeat: Arc<SequencerHeartbeatMonitor>,
+    discord: Arc<DiscordNotifier>,
 }
 
 /// ⚙️ Configuração do ORCA
@@ -246,6 +248,7 @@ impl OrcaEngine {
             transfer_entropy: Arc::new(RwLock::new(TransferEntropyDetector::new(20))),
             invisible_probe: Arc::new(InvisibleProbe::new().await),
             sequencer_heartbeat: Arc::new(SequencerHeartbeatMonitor::new().await),
+            discord: Arc::new(DiscordNotifier::new(&std::env::var("DISCORD_WEBHOOK").unwrap_or_default())),
         }
     }
 
@@ -279,6 +282,8 @@ impl OrcaEngine {
         let graph = ArbGraph::new(shared_pool_cache, U256::from(10).pow(U256::from(19)));
         self.arb_graph = Arc::new(RwLock::new(graph));
         info!("[ORCA] 🔗 Pool cache partilhado injetado no motor de arbitragem");
+        let discord_start = self.discord.clone();
+        tokio::spawn(async move { discord_start.notify_start().await; });
         // Arrancar InvisibleProbe em background — seleciona RPC mais rápido continuamente
         let probe = self.invisible_probe.clone();
         tokio::spawn(async move {
@@ -1080,13 +1085,24 @@ impl Strategy for OrcaEngine {
                         seen_paths.insert(path_str.clone());
                         self.opp_logger.log(&crate::logger::opportunity_logger::OpportunityRecord {
                             block: swap.block_number,
-                            path: path_str,
+                            path: path_str.clone(),
                             hops: opp.hops.len(),
                             input_wei: opp.input_amount.to::<u128>(),
                             gross_profit_wei: opp.gross_profit.to::<u128>(),
                             net_profit_wei: opp.net_profit.to::<u128>(),
                             gas_cost_wei: opp.gas_cost.to::<u128>(),
                         });
+                        // Notificação Discord para opps > 1€
+                        let profit_eur = opp.net_profit.to::<u128>() as f64 / 1e18 * 1800.0;
+                        if profit_eur >= 1.0 {
+                            let discord = self.discord.clone();
+                            let path_discord = path_str.clone();
+                            let hops_n = opp.hops.len();
+                            let block_n = swap.block_number;
+                            tokio::spawn(async move {
+                                discord.notify_opportunity(&path_discord, profit_eur, hops_n, block_n).await;
+                            });
+                        }
                     }
                 }
 
