@@ -20,9 +20,16 @@ pub struct UniswapV3Factory {
 }
 
 impl UniswapV3Factory {
+    // CORREÇÃO: este endereço estava errado desde o início (era um endereço
+    // completamente diferente, não um typo) -- confirmado contra a
+    // documentação oficial da Uniswap (docs.uniswap.org/contracts/v3/reference/deployments/base-deployments)
+    // e validado on-chain via eth_getCode (endereço antigo devolvia "0x",
+    // ou seja, nunca existiu contrato nenhum ali). Sem impacto funcional
+    // real porque os 3 usos desta constante eram código morto (logs e uma
+    // lista nunca consultada), mas corrigido por rigor.
     pub const ADDRESS: Address = Address::new([
-        0x33, 0x1F, 0x28, 0x5f, 0xB8, 0x20, 0x8E, 0xFC, 0x0b, 0xFF, 0xcd, 0x81, 0xEb, 0x72, 0x40,
-        0x28, 0x71, 0xb8, 0xBB, 0x4f,
+        0x33, 0x12, 0x8a, 0x8f, 0xC1, 0x78, 0x69, 0x89, 0x7d, 0xcE, 0x68, 0xEd, 0x02, 0x6d, 0x69,
+        0x46, 0x21, 0xf6, 0xFD, 0xfD,
     ]);
 
     /// Calcula o endereço da pool determinístico

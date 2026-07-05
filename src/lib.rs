@@ -26,6 +26,7 @@ pub mod orca;
 pub mod liquidation;
 
 // Novos módulos MEV Elite
+pub mod pricing;
 pub mod cache;
 pub mod graph;
 pub mod math;

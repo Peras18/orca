@@ -716,7 +716,7 @@ impl ArbGraph {
                     U256::ZERO
                 };
                 let profit_ratio = if gas_cost.is_zero() { f64::MAX } else {
-                    gross_profit.to::<u128>() as f64 / gas_cost.to::<u128>() as f64
+                    gross_profit.try_into().unwrap_or(u128::MAX) as f64 / gas_cost.try_into().unwrap_or(u128::MAX) as f64
                 };
                 if profit_ratio < min_profit_ratio {
                     trace!(

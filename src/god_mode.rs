@@ -244,7 +244,7 @@ impl GasProfiler {
     }
 
     pub async fn calculate_priority_fee(&self, base_gas_price: U256, estimated_gas: u64) -> Option<u128> {
-        let priority_fee = base_gas_price.to::<u128>() + self.competitor_premium;
+        let priority_fee = base_gas_price.try_into().unwrap_or(u128::MAX) + self.competitor_premium;
         let total_cost = U256::from(priority_fee) * U256::from(estimated_gas);
         
         if total_cost > self.max_gas_cost_wei {

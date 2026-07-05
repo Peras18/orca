@@ -30,6 +30,11 @@ pub struct PoolState {
     pub dex_type: DexType,
     /// Bloco da última atualização
     pub last_update_block: u64,
+    /// Bloco da última atualização REAL de reservas/liquidez (diferente de
+    /// last_update_block, que também é "tocado" por eventos sem dados novos
+    /// -- usado por is_stale() para detectar pools genuinamente congeladas,
+    /// mesmo que continuem a receber touch() de swaps não-relacionados).
+    pub last_real_sync_block: u64,
     /// Timestamp da última atualização (unix millis)
     pub last_update_time: u64,
     /// Decimals do token0
@@ -66,6 +71,7 @@ impl PoolState {
             fee,
             dex_type,
             last_update_block: 0,
+            last_real_sync_block: 0,
             last_update_time: 0,
             decimals0: 18,
             decimals1: 18,
@@ -79,7 +85,21 @@ impl PoolState {
 
     /// Verifica se as reserves são válidas (não zero)
     pub fn has_liquidity(&self) -> bool {
-        !self.reserve0.is_zero() && !self.reserve1.is_zero()
+        // CORREÇÃO: para pools V3, reserve0/reserve1 são uma aproximação
+        // sintética sempre preenchida com algo não-zero -- isso deixava
+        // passar pools V3 com liquidity() REAL = 0 (criadas mas nunca
+        // tiveram depósito, ou liquidez totalmente removida). Confirmado
+        // on-chain: pool 0xfd51554381c7a03b3a6ed5e28c216b1aa2b51c8c existe,
+        // mas liquidity()=0 -- causava "Unexpected error" no QuoterV2 e
+        // "IIA" no nosso contrato, sempre, independentemente do tamanho do
+        // swap testado (mesmo 4 wei revertia). Para V3/Slipstream, exigir
+        // também liquidity > 0 explicitamente.
+        let has_reserves = !self.reserve0.is_zero() && !self.reserve1.is_zero();
+        if matches!(self.dex_type, crate::contracts::DexType::UniswapV3 | crate::contracts::DexType::PancakeSwap) {
+            has_reserves && self.liquidity.unwrap_or(0) > 0
+        } else {
+            has_reserves
+        }
     }
 
     /// Verifica se os dados estão stale (sem actualizacão recente).
@@ -95,7 +115,11 @@ impl PoolState {
     ///  - 500 blocos = ~4 minutos: qualquer pool activa certamente recebe
     ///    pelo menos um evento nesse período.
     pub fn is_stale(&self, current_block: u64) -> bool {
-        current_block.saturating_sub(self.last_update_block) > 500
+        // CORREÇÃO: usar last_real_sync_block, não last_update_block --
+        // touch() actualiza last_update_block sem nunca mudar reservas
+        // reais, fazendo pools genuinamente congeladas (confirmado: zero
+        // eventos Sync reais em 2.7h+) nunca serem marcadas como stale.
+        current_block.saturating_sub(self.last_real_sync_block) > 500
     }
 
     /// Calcula preço spot (token1/token0)
@@ -153,6 +177,7 @@ impl PoolState {
 
         self.sqrt_price_x96 = Some(sqrt_price_x96.try_into().unwrap_or(u128::MAX));
         self.liquidity = Some(liquidity);
+        self.last_real_sync_block = block;
 
         self.last_update_block = block;
         self.last_update_time = std::time::SystemTime::now()

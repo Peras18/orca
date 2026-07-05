@@ -214,12 +214,28 @@ impl SequencerHeartbeatMonitor {
         
         let now = Instant::now();
         if send_time > now {
-            let wait_duration = send_time - now;
+            let wait_duration = (send_time - now).min(Duration::from_millis(250)); // CORREÇÃO: deadline do contrato é ~4s no total -- sem cap, esperava vários segundos sem orçamento sobrar para nonce+eth_call+envio, causando ~78% de falhas "Block deadline exceeded"
             tokio::time::sleep(wait_duration).await;
         }
     }
     
     /// 📊 Retorna RTT atual
+    /// 🔄 Sincroniza o bloco mais recente com a chain real.
+    /// CORREÇÃO: last_block_number/last_block_time eram só atualizados por
+    /// uma simulação interna (incrementa 1 a cada ~2s artificiais), nunca
+    /// em sincronia com o bloco real da Base -- predict_next_block_time()
+    /// ficava sempre desligado da realidade. O cap de 250ms em
+    /// wait_for_send_window já protegia contra esperas longas causadas por
+    /// isto, mas corrige-se aqui na fonte para coerência com o resto do
+    /// sistema (mesmo princípio do fix em SequencerSync::update_block).
+    pub async fn update_block(&self, block: u64) {
+        let mut last_num = self.last_block_number.write().await;
+        if block > *last_num {
+            *last_num = block;
+            *self.last_block_time.write().await = Instant::now();
+        }
+    }
+
     pub async fn current_rtt_us(&self) -> u64 {
         *self.current_rtt_us.read().await
     }

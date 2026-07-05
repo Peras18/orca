@@ -201,8 +201,8 @@ impl ArbitrageStrategy {
             let state = PoolState {
                 token0: swap.token_in,
                 token1: swap.token_out,
-                reserve0: swap.amount_in.to::<u128>(),
-                reserve1: swap.amount_out.to::<u128>(),
+                reserve0: swap.amount_in.try_into().unwrap_or(u128::MAX),
+                reserve1: swap.amount_out.try_into().unwrap_or(u128::MAX),
                 last_update: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -228,8 +228,8 @@ impl ArbitrageStrategy {
         
         if let Some(state) = self.pool_states.get_mut(&swap.pool) {
             // Atualizar reservas (simplificado - usando valores do swap)
-            state.reserve0 = swap.amount_in.to::<u128>();
-            state.reserve1 = swap.amount_out.to::<u128>();
+            state.reserve0 = swap.amount_in.try_into().unwrap_or(u128::MAX);
+            state.reserve1 = swap.amount_out.try_into().unwrap_or(u128::MAX);
             state.last_update = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()

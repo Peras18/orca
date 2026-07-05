@@ -62,21 +62,16 @@ impl BankrollManager {
         // Banca em ETH (18 decimais)
         let balance_eth = self.current_balance / 1_000_000_000_000_000; // em finney
 
-        // Escala de flash loan baseada na banca:
-        // < 0.05 ETH:  pedir 0.5 ETH  (10x leverage)
-        // < 0.1  ETH:  pedir 1.0 ETH  (10-20x)
-        // < 0.5  ETH:  pedir 2.0 ETH
-        // < 1.0  ETH:  pedir 5.0 ETH
-        // < 5.0  ETH:  pedir 10.0 ETH
-        // >= 5.0 ETH:  pedir 20.0 ETH
-        let base_flash_eth: u128 = match balance_eth {
-            0..=49 => 500,         // 0.5 ETH em finney
-            50..=99 => 1_000,      // 1.0 ETH
-            100..=499 => 2_000,    // 2.0 ETH
-            500..=999 => 5_000,    // 5.0 ETH
-            1000..=4999 => 10_000, // 10.0 ETH
-            _ => 20_000,           // 20.0 ETH
-        };
+        // CORREÇÃO: o tamanho do flash loan NÃO precisa de escalar com a banca --
+        // o risco de um flash loan é só o gás da tentativa (atómico: ou paga-se
+        // de volta com lucro, ou a tx inteira reverte, nunca se "perde" o
+        // principal emprestado). O travão real de segurança é o cap de 15% da
+        // reserve da pool, calculado a seguir -- esse sim protege contra
+        // destruir o lucro com slippage. Pedir sempre uma base alta deixa esse
+        // cap fazer o trabalho de limitar, em vez de a banca pequena limitar
+        // artificialmente oportunidades grandes que a pool aguentaria.
+        let _ = balance_eth; // mantido para logging/diagnóstico, já não decide o tamanho
+        let base_flash_eth: u128 = 10_000; // sempre tenta 10.0 ETH como base de partida
 
         let flash_wei = base_flash_eth * 1_000_000_000_000_000;
 

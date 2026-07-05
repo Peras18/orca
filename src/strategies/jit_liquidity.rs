@@ -51,8 +51,14 @@ impl JITMonitor {
         }
 
         // Fee earned = amount * fee_tier
-        let fee_earned_eth = swap_amount_eth * (pool.fee as f64) / 10000.0;
-        
+        // pool.fee vem em hundredths-of-a-bip (ex: 3000 = 0.3%, 500 = 0.05%),
+        // a mesma unidade usada nativamente pelo Uniswap V3 / Aerodrome CL.
+        // 1 unidade = 0.0001% = 1/1_000_000 -- por isso a divisão correta é
+        // por 1_000_000, não por 10_000 (que estava a inflacionar a fee 100x:
+        // ex. fee=3000 calculava 30% em vez de 0.3%, dando "2100 ETH de fee"
+        // em swaps de ~7000 ETH onde o valor real seria ~21 ETH).
+        let fee_earned_eth = swap_amount_eth * (pool.fee as f64) / 1_000_000.0;
+
         // Gas cost em ETH
         let gas_used = 300_000.0;
         let gas_cost_eth = gas_used * gas_price_gwei / 1_000_000_000.0;
@@ -83,7 +89,7 @@ impl JITMonitor {
         // L = volume / (2 * price)
         let current_liquidity = pool.liquidity as f64;
         let additional = (target_volume_eth * 1e18) / current_liquidity.max(1.0);
-        
+
         additional.min(1e15) as u128 // Cap para não exagerar
     }
 }

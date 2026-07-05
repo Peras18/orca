@@ -171,7 +171,7 @@ impl WhaleDetector {
         
         // Verificar valor (10 ETH mínimo)
         let value = tx.inner.value();
-        let value_eth = value.to::<u128>() as f64 / 1e18;
+        let value_eth = value.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
         debug!("[WHALE-DEBUG] TX {:?} | Value: {:.4} ETH | Threshold: {} ETH",
             tx_hash, value_eth, WHALE_MIN_ETH);
         
@@ -186,7 +186,7 @@ impl WhaleDetector {
             tx_hash,
             pool_address: to.unwrap_or_default(),
             from: tx.from,
-            value_eth: value.to::<u128>() as f64 / 1e18,
+            value_eth: value.try_into().unwrap_or(u128::MAX) as f64 / 1e18,
             token_in: Address::ZERO, // Decodificar do input
             token_out: Address::ZERO,
             amount_in: value,

@@ -310,8 +310,8 @@ impl NewtonJacobianSolver {
     async fn simulate_swap(&self, pool: PoolReserves, amount_in: f64) -> f64 {
         if amount_in <= 0.0 { return 0.0; }
         
-        let r_in = pool.reserve0.to::<u128>() as f64 / 1e18; // Assumindo ETH em pool de 18 decimais
-        let r_out = pool.reserve1.to::<u128>() as f64 / 1e18;
+        let r_in = pool.reserve0.try_into().unwrap_or(u128::MAX) as f64 / 1e18; // Assumindo ETH em pool de 18 decimais
+        let r_out = pool.reserve1.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
         let fee = pool.fee as f64 / 1_000_000.0;
         
         // Uniswap V2 constant product: (r_in + amount_in * (1-fee)) * (r_out - amount_out) = r_in * r_out

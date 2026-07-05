@@ -449,7 +449,7 @@ impl ContinuousProfitEngine {
         }
         
         // Value alto = impacto de preço = arbitragem viável
-        let value_eth = tx.value.to::<u128>() as f64 / 1e18;
+        let value_eth = tx.value.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
         if value_eth > 1.0 {
             score += 0.2;
         }

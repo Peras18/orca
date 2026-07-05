@@ -97,7 +97,7 @@ impl StateSimulator {
             DexType::UniswapV3 | DexType::UniswapV2 | DexType::PancakeSwap => {
                 // Para V3, usamos o sqrt_price_x96 para calcular reservas virtuais
                 if let Some(price) = swap.sqrt_price_x96 {
-                    state.sqrt_price_x96 = price.to::<u128>();
+                    state.sqrt_price_x96 = price.try_into().unwrap_or(u128::MAX);
                 }
                 if let Some(liq) = swap.liquidity {
                     // Reservas virtuais baseadas em liquidez e preço
@@ -109,8 +109,8 @@ impl StateSimulator {
             }
             DexType::Aerodrome | DexType::AerodromeStable => {
                 // Para Aerodrome (CPMM), acumulamos diretamente
-                state.reserve0 += swap.amount_in.to::<u128>();
-                state.reserve1 = state.reserve1.saturating_sub(swap.amount_out.to::<u128>());
+                state.reserve0 += swap.amount_in.try_into().unwrap_or(u128::MAX);
+                state.reserve1 = state.reserve1.saturating_sub(swap.amount_out.try_into().unwrap_or(u128::MAX));
             }
         }
         
@@ -125,7 +125,7 @@ impl StateSimulator {
         let cache = self.state_cache.read().await;
         
         // Simulação in-memory sem REVM para máxima velocidade
-        let mut amount = path.optimal_input.to::<u128>();
+        let mut amount = path.optimal_input.try_into().unwrap_or(u128::MAX);
         let initial_amount = amount;
         let mut total_gas = self.base_gas_cost;
         

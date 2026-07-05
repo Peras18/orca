@@ -164,6 +164,21 @@ impl SequencerSync {
     }
     
     /// 🎯 Calcula timing ótimo para envio
+    /// 🔄 Atualiza o bloco mais recente observado on-chain.
+    /// CORREÇÃO CRÍTICA: 'last_block' nunca era atualizado depois do new()
+    /// (ficava sempre em 0) -- calculate_optimal_timing calculava
+    /// target_block = last_block + 1 = 1 (ou 6 com a margem +5), sempre,
+    /// independentemente do bloco real da chain (que já ia em 47M+).
+    /// Isso fazia TODAS as transações falharem no eth_call com "Block
+    /// deadline exceeded" -- não importava a margem configurada, porque
+    /// o deadline codificado nunca chegava perto do bloco real.
+    pub async fn update_block(&self, block: u64) {
+        let mut last = self.last_block.write().await;
+        if block > *last {
+            *last = block;
+        }
+    }
+
     pub async fn calculate_optimal_timing(&self) -> BlockTiming {
         let rtt = *self.current_rtt_us.read().await;
         let stddev = *self.rtt_stddev.read().await;
@@ -173,7 +188,7 @@ impl SequencerSync {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_millis() as u64;
         
         let next_block = last_block + 1;
         let time_to_next = self.block_time_ms as i64 - (now as i64 % self.block_time_ms as i64);
@@ -211,10 +226,10 @@ impl SequencerSync {
             .unwrap_or_default()
             .as_millis() as u64;
         
-        let send_at = timing.deadline * 1000 - rtt_ms - 100; // 100ms margem
+        let send_at = timing.deadline.saturating_sub(rtt_ms).saturating_sub(100); // deadline já em ms (corrigido) -- não multiplicar por 1000 outra vez
         
         if send_at > now {
-            let wait_ms = send_at - now;
+            let wait_ms = (send_at - now).min(250u64); // CORREÇÃO: deadline do contrato é target_block+2 (~4s) -- 250ms deixa orçamento real para nonce+eth_call+rede a seguir
             trace!("[SEQUENCER] ⏳ Aguardando {}ms para envio", wait_ms);
             tokio::time::sleep(Duration::from_millis(wait_ms)).await;
         }

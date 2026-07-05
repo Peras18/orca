@@ -36,7 +36,9 @@ rust_xlsxwriter = "0.75"
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "abort" removido: um panic numa task isolada (ex: token exotico
+# causando overflow) matava o processo INTEIRO. Sem isto, tokio::spawn isola
+# o panic a essa task -- o resto do bot continua vivo.
 
 [[bin]]
 name = "orca-engine"

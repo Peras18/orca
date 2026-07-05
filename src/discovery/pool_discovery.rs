@@ -1655,6 +1655,13 @@ impl PoolDiscoveryEngine {
         let pools = self.pools.read().await;
         pools.keys().cloned().collect()
     }
+
+    /// 📦 Retorna os dados completos das pools descobertas (token0/token1/fee/dex_type)
+    /// -- necessario para pre-popular o pool_cache antes do bootstrap via Multicall3
+    pub async fn get_all_pool_data(&self) -> Vec<PoolData> {
+        let pools = self.pools.read().await;
+        pools.values().cloned().collect()
+    }
     
     /// Regista pool descoberta ON-THE-FLY com TVL calculado das reserves reais
     pub async fn register_pool_otf(
@@ -1670,14 +1677,14 @@ impl PoolDiscoveryEngine {
         // TVL estimado: se um dos tokens é WETH, usa reserve_weth * 2 * eth_price
         let weth = address!("0x4200000000000000000000000000000000000006");
         let tvl_usd = if token0 == weth {
-            let r0_eth = reserve0.to::<u128>() as f64 / 1e18;
+            let r0_eth = reserve0.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
             r0_eth * 2.0 * eth_price_usd
         } else if token1 == weth {
-            let r1_eth = reserve1.to::<u128>() as f64 / 1e18;
+            let r1_eth = reserve1.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
             r1_eth * 2.0 * eth_price_usd
         } else {
             // USDC pool: reserve em 6 decimais * 2
-            let r0_usdc = reserve0.to::<u128>() as f64 / 1e6;
+            let r0_usdc = reserve0.try_into().unwrap_or(u128::MAX) as f64 / 1e6;
             r0_usdc * 2.0
         };
         let score = (tvl_usd.log10().max(0.0) * 20.0) as f32;

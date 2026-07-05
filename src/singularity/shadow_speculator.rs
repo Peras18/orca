@@ -235,8 +235,8 @@ impl ShadowMempool {
         let new_reserve_out = reserve_out - amount_out;
         
         // Impacto de preço
-        let price_before = reserve_out.to::<u128>() as f64 / reserve_in.to::<u128>() as f64;
-        let price_after = new_reserve_out.to::<u128>() as f64 / new_reserve_in.to::<u128>() as f64;
+        let price_before = reserve_out.try_into().unwrap_or(u128::MAX) as f64 / reserve_in.try_into().unwrap_or(u128::MAX) as f64;
+        let price_after = new_reserve_out.try_into().unwrap_or(u128::MAX) as f64 / new_reserve_in.try_into().unwrap_or(u128::MAX) as f64;
         let impact = ((price_after - price_before) / price_before).abs() * 100.0;
         
         if swap.token_in == reserves.token0 {

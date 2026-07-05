@@ -110,7 +110,7 @@ impl LiquidationHunter {
         let debt_price = self.token_prices.get(&pos.debt_token)?;
 
         // Máximo liquidável: 50% da dívida (Aave/Moonwell limit)
-        let debt_to_repay_usd = (pos.debt_amount.to::<u128>() as f64 / 1e18)
+        let debt_to_repay_usd = (pos.debt_amount.try_into().unwrap_or(u128::MAX) as f64 / 1e18)
             * debt_price * 0.5;
 
         let bonus = pos.protocol.liquidation_bonus_bps() as f64 / 10_000.0;
@@ -150,9 +150,9 @@ impl LiquidationHunter {
         // Liquidation threshold típico: 80% (varia por protocolo)
         let liquidation_threshold = 0.80;
 
-        let collateral_usd = (pos.collateral_amount.to::<u128>() as f64 / 1e18)
+        let collateral_usd = (pos.collateral_amount.try_into().unwrap_or(u128::MAX) as f64 / 1e18)
             * collateral_price * liquidation_threshold;
-        let debt_usd = (pos.debt_amount.to::<u128>() as f64 / 1e18) * debt_price;
+        let debt_usd = (pos.debt_amount.try_into().unwrap_or(u128::MAX) as f64 / 1e18) * debt_price;
 
         if debt_usd == 0.0 { return Some(f64::MAX); }
         Some(collateral_usd / debt_usd)

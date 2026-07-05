@@ -124,7 +124,7 @@ impl WhalePredictor {
         value: U256,
         data: Vec<u8>,
     ) -> Result<Option<WhalePrediction>> {
-        let value_u128 = value.to::<u128>();
+        let value_u128 = value.try_into().unwrap_or(u128::MAX);
         if value_u128 < WHALE_THRESHOLD_WEI {
             return Ok(None);
         }
@@ -229,9 +229,9 @@ impl WhalePredictor {
             (reserves.reserve1, reserves.reserve0)
         };
 
-        let reserve_in_f = reserve_in.to::<u128>() as f64;
-        let reserve_out_f = reserve_out.to::<u128>() as f64;
-        let amount_in_f = amount_in.to::<u128>() as f64;
+        let reserve_in_f = reserve_in.try_into().unwrap_or(u128::MAX) as f64;
+        let reserve_out_f = reserve_out.try_into().unwrap_or(u128::MAX) as f64;
+        let amount_in_f = amount_in.try_into().unwrap_or(u128::MAX) as f64;
         let fee_f = reserves.fee as f64 / 1_000_000.0;
 
         let current_price = reserve_out_f / reserve_in_f;

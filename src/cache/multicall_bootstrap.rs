@@ -6,6 +6,7 @@
 //! Endereço Multicall3: 0xcA11bde05977b3631167028862bE2a173976CA11
 
 use alloy::primitives::{Address, U256, FixedBytes};
+use alloy::sol_types::SolCall;
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::eth::TransactionRequest;
 use alloy::transports::BoxTransport;
@@ -18,6 +19,23 @@ use alloy::primitives::address;
 use crate::cache::PoolCache;
 use crate::cache::pool_cache::{PoolState, build_getreserves_multicall, decode_getreserves_result};
 use crate::contracts::DexType;
+
+// Interface Multicall3 real -- sol! garante codificacao ABI correcta
+// (a codificacao manual anterior tinha bugs: offset de array a zero e
+// faltava a camada de offsets por-elemento exigida por arrays de structs
+// com campos dinamicos, causando "execution reverted").
+alloy::sol! {
+    struct Call3 {
+        address target;
+        bool allowFailure;
+        bytes callData;
+    }
+    struct Result3 {
+        bool success;
+        bytes returnData;
+    }
+    function aggregate3(Call3[] calls) external returns (Result3[] memory returnData);
+}
 
 /// Bootstrap configuration
 #[derive(Clone, Debug)]
@@ -70,12 +88,22 @@ impl MulticallBootstrap {
             return Ok(0);
         }
 
-        info!("🚀 [BOOTSTRAP] Inicializando {} pools via Multicall3", pool_addresses.len());
+        // CORREÇÃO: obter o bloco real ANTES do bootstrap -- sem isto, update_reserves_v2
+        // usava bloco fixo 0, e is_stale() (que verifica current_block - last_update > 500)
+        // marcava TODAS as pools do Multicall como obsoletas imediatamente, excluindo-as
+        // do grafo apesar de terem reserves válidas.
+        let current_block = {
+            let provider = self.provider.read().await;
+            provider.get_block_number().await.unwrap_or(0)
+        };
+
+        info!("🚀 [BOOTSTRAP] Inicializando {} pools via Multicall3 (bloco {})", pool_addresses.len(), current_block);
         
         let mut initialized = 0usize;
         let batches = pool_addresses.chunks(self.config.batch_size);
         
         for (batch_idx, batch) in batches.enumerate() {
+            let current_block = current_block;
             debug!(
                 "[BOOTSTRAP] Processando batch {}/{} ({} pools)",
                 batch_idx + 1,
@@ -83,7 +111,7 @@ impl MulticallBootstrap {
                 batch.len()
             );
 
-            match self.process_batch(batch).await {
+            match self.process_batch(batch, current_block).await {
                 Ok(batch_initialized) => {
                     initialized += batch_initialized;
                     debug!(
@@ -113,7 +141,7 @@ impl MulticallBootstrap {
     }
 
     /// Processa um batch de pools via Multicall3
-    async fn process_batch(&self, pool_addresses: &[Address]) -> Result<usize> {
+    async fn process_batch(&self, pool_addresses: &[Address], current_block: u64) -> Result<usize> {
         // 1. Construir multicall data
         let calls = build_getreserves_multicall(pool_addresses);
         
@@ -133,7 +161,7 @@ impl MulticallBootstrap {
                         // Usar DexType::UniswapV2 como default para bootstrap
                         // O tipo correto será determinado depois
                         state.dex_type = DexType::UniswapV2;
-                        state.update_reserves_v2(reserve0, reserve1, 0);
+                        state.update_reserves_v2(reserve0, reserve1, current_block);
                         self.cache.insert(state);
                         initialized += 1;
                         
@@ -149,121 +177,41 @@ impl MulticallBootstrap {
         Ok(initialized)
     }
 
-    /// Constrói calldata para Multicall3.aggregate3
+    /// Constrói calldata para Multicall3.aggregate3 -- via sol! (ABI correcta garantida)
     fn build_aggregate3_calldata(&self, calls: &[crate::cache::pool_cache::Multicall3Call]) -> Result<Vec<u8>> {
-        // Selector aggregate3((address target, bool allowFailure, bytes callData)[])
-        // 0xac9650d8
-        let mut calldata = vec![0xac, 0x96, 0x50, 0xd8];
-        
-        // Adicionar offset para array (32 bytes)
-        calldata.extend_from_slice(&[0x00; 32]);
-        
-        // Adicionar length do array (32 bytes)
-        let length = U256::from(calls.len());
-        calldata.extend_from_slice(&length.to_be_bytes::<32>());
-        
-        // Para cada call: target (20) + padding (12) + allowFailure (32) + callData_offset (32) + callData_length (32) + callData
-        let mut data_offset = 32 * (4 + calls.len() * 3); // Base + array header + cada call header
-        
-        for call in calls {
-            // Target address (20 bytes) + padding (12 bytes)
-            calldata.extend_from_slice(&[0x00; 12]);
-            calldata.extend_from_slice(call.target.as_slice());
-            
-            // allowFailure (bool como uint256)
-            let allow_failure = if call.allow_failure { U256::from(1) } else { U256::ZERO };
-            calldata.extend_from_slice(&allow_failure.to_be_bytes::<32>());
-            
-            // callData offset
-            let offset = U256::from(data_offset);
-            calldata.extend_from_slice(&offset.to_be_bytes::<32>());
-            
-            // callData length
-            let length = U256::from(call.call_data.len());
-            calldata.extend_from_slice(&length.to_be_bytes::<32>());
-            
-            // Atualizar offset para próximo
-            data_offset += call.call_data.len();
-        }
-        
-        // Adicionar todos os callData
-        for call in calls {
-            calldata.extend_from_slice(&call.call_data);
-        }
-        
-        Ok(calldata)
+        let sol_calls: Vec<Call3> = calls
+            .iter()
+            .map(|c| Call3 {
+                target: c.target,
+                allowFailure: c.allow_failure,
+                callData: c.call_data.clone().into(),
+            })
+            .collect();
+        let call = aggregate3Call { calls: sol_calls };
+        Ok(call.abi_encode())
     }
 
     /// Executa chamada Multicall3
     async fn execute_multicall(&self, calldata: &[u8]) -> Result<Vec<Vec<u8>>> {
         let provider = self.provider.read().await;
-        
-        // Criar transação call
         let tx = TransactionRequest::default()
             .to(self.multicall_address)
             .input(calldata.to_vec().into());
-        
-        // Executar call
         let result = provider.call(&tx).await?;
-        
-        // Decodificar resultado aggregate3
         self.decode_aggregate3_result(&result)
     }
 
-    /// Decodifica resultado de aggregate3
+    /// Decodifica resultado de aggregate3 -- via sol! (ABI correcta garantida)
     fn decode_aggregate3_result(&self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
-        if data.len() < 96 {
-            return Ok(Vec::new());
-        }
-        
-        // aggregate3 retorna (uint256 returnData, bool success)[]
-        // Skip primeiro array (32 bytes de offset)
-        let array_start = 32;
-        
-        if data.len() < array_start + 32 {
-            return Ok(Vec::new());
-        }
-        
-        // Ler length do array
-        let length_bytes = &data[array_start..array_start + 32];
-        let length = U256::from_be_slice(length_bytes).to::<usize>();
-        
-        let mut results = Vec::with_capacity(length);
-        let mut offset = array_start + 32;
-        
-        for _ in 0..length {
-            if offset + 64 > data.len() {
-                break;
-            }
-            
-            // Cada elemento: returnData_offset (32) + success (32)
-            let return_data_offset_bytes = &data[offset..offset + 32];
-            let return_data_offset = U256::from_be_slice(return_data_offset_bytes).to::<usize>();
-            
-            let success_bytes = &data[offset + 32..offset + 64];
-            let success = U256::from_be_slice(success_bytes) != U256::ZERO;
-            
-            if success && return_data_offset < data.len() {
-                // Ler length do returnData
-                if return_data_offset + 32 <= data.len() {
-                    let return_data_length_bytes = &data[return_data_offset..return_data_offset + 32];
-                    let return_data_length = U256::from_be_slice(return_data_length_bytes).to::<usize>();
-                    
-                    let data_start = return_data_offset + 32;
-                    let data_end = data_start + return_data_length;
-                    
-                    if data_end <= data.len() {
-                        let return_data = data[data_start..data_end].to_vec();
-                        results.push(return_data);
-                    }
-                }
-            }
-            
-            offset += 64;
-        }
-        
-        Ok(results)
+        let decoded = aggregate3Call::abi_decode_returns(data, false)
+            .map_err(|e| eyre::eyre!("Falha ao decodificar aggregate3: {}", e))?;
+        Ok(decoded
+            .returnData
+            .into_iter()
+            .map(|r| if r.success { r.returnData.to_vec() } else { Vec::new() })
+            .collect())
     }
+        
 
     /// 🧹 Limpa pools sem reserves após bootstrap
     pub async fn cleanup_empty_pools(&self) -> Result<usize> {

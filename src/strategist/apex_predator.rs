@@ -135,7 +135,7 @@ impl ApexPredator {
             let gas_spent = *self.total_gas_spent.read().await;
             
             let progress = (profit / DAILY_TARGET_USD) * 100.0;
-            let gas_eth = gas_spent.to::<u128>() as f64 / 1e18;
+            let gas_eth = gas_spent.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
             
             info!("📊📊📊 [APEX STATUS] Profit: ${:.2} ({:.1}%) | Trades: {} | Discarded: {} | Gas: {:.4} ETH",
                 profit, progress, executed, discarded, gas_eth);
@@ -321,7 +321,7 @@ impl ApexPredator {
             executed_trades: executed,
             discarded_opportunities: discarded,
             success_rate_percent: success_rate,
-            total_gas_spent_eth: gas_spent.to::<u128>() as f64 / 1e18,
+            total_gas_spent_eth: gas_spent.try_into().unwrap_or(u128::MAX) as f64 / 1e18,
             average_gas_tip_gwei: avg_gas_tip,
         }
     }

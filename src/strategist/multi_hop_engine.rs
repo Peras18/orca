@@ -249,7 +249,7 @@ impl MultiHopEngine {
         
         // Calcular lucro
         let profit = final_amount.saturating_sub(optimal_amount);
-        let profit_eth = profit.to::<u128>() as f64 / 1e18;
+        let profit_eth = profit.try_into().unwrap_or(u128::MAX) as f64 / 1e18;
         let profit_usd = profit_eth * 2500.0; // ETH @ $2500
         
         if profit_usd < min_profit {
@@ -288,15 +288,15 @@ impl MultiHopEngine {
             // P(x) = simulate(x) - x
             let u_val_center = U256::from((x_f * 1e18) as u128);
             let (out_center, _) = self.simulate_path(pools, tokens, u_val_center).await.unwrap_or((U256::ZERO, 0.0));
-            let p_center = out_center.to::<u128>() as f64 / 1e18 - x_f;
+            let p_center = out_center.try_into().unwrap_or(u128::MAX) as f64 / 1e18 - x_f;
 
             let u_val_plus = U256::from(((x_f + h) * 1e18) as u128);
             let (out_plus, _) = self.simulate_path(pools, tokens, u_val_plus).await.unwrap_or((U256::ZERO, 0.0));
-            let p_plus = out_plus.to::<u128>() as f64 / 1e18 - (x_f + h);
+            let p_plus = out_plus.try_into().unwrap_or(u128::MAX) as f64 / 1e18 - (x_f + h);
 
             let u_val_minus = U256::from(((x_f - h) * 1e18) as u128);
             let (out_minus, _) = self.simulate_path(pools, tokens, u_val_minus).await.unwrap_or((U256::ZERO, 0.0));
-            let p_minus = out_minus.to::<u128>() as f64 / 1e18 - (x_f - h);
+            let p_minus = out_minus.try_into().unwrap_or(u128::MAX) as f64 / 1e18 - (x_f - h);
 
             // Derivadas
             let p_prime = (p_plus - p_minus) / (2.0 * h);
@@ -364,10 +364,10 @@ impl MultiHopEngine {
             amount = numerator / denominator;
             
             // Calcular slippage deste hop
-            let price_before = reserve_out.to::<u128>() as f64 / reserve_in.to::<u128>() as f64;
+            let price_before = reserve_out.try_into().unwrap_or(u128::MAX) as f64 / reserve_in.try_into().unwrap_or(u128::MAX) as f64;
             let new_reserve_in = reserve_in + amount_in_with_fee;
             let new_reserve_out = reserve_out - amount;
-            let price_after = new_reserve_out.to::<u128>() as f64 / new_reserve_in.to::<u128>() as f64;
+            let price_after = new_reserve_out.try_into().unwrap_or(u128::MAX) as f64 / new_reserve_in.try_into().unwrap_or(u128::MAX) as f64;
             let slippage = ((price_after - price_before) / price_before).abs() * 10000.0; // bps
             total_slippage += slippage;
         }
@@ -442,8 +442,8 @@ impl FlashloanMultiHop {
         let max = self.max_amount_per_tx.min(available_liquidity).min(ten_x_optimal);
         
         info!("💰💰💰 [FLASHLOAN] Quantidade alavancada: {} ETH (${})",
-            max.to::<u128>() as f64 / 1e18,
-            max.to::<u128>() as f64 / 1e18 * 2500.0);
+            max.try_into().unwrap_or(u128::MAX) as f64 / 1e18,
+            max.try_into().unwrap_or(u128::MAX) as f64 / 1e18 * 2500.0);
         
         max
     }

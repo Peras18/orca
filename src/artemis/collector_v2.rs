@@ -266,17 +266,26 @@ impl LogCollectorV2 {
             }
             last_reconnect = Instant::now();
 
-            // FAILOVER LOGIC: Mudar RPC se houver erros persistentes
+            // FAILOVER LOGIC: Mudar RPC se houver erros persistentes — RECONECTA DE VERDADE
             if reconnect_attempts > 2 {
                 let mut idx = current_rpc_idx.write().await;
                 *idx = (*idx + 1) % config.wss_urls.len();
-                info!(
-                    "🔄 [FAILOVER] Mudando para RPC secundário: {}",
-                    config.wss_urls[*idx]
-                );
+                let next_url = config.wss_urls[*idx].clone();
+                drop(idx);
+                info!("🔄 [FAILOVER] Mudando para RPC secundário: {}", next_url);
 
-                // Em produção: aqui atualizaríamos o provider real com a nova URL
-                // Para este exemplo, assumimos que o provider será recriado no próximo loop
+                match alloy::providers::builder()
+                    .on_ws(alloy::transports::ws::WsConnect::new(next_url.clone()))
+                    .await
+                {
+                    Ok(new_conn) => {
+                        *provider.write().await = new_conn.boxed();
+                        info!("✅ [FAILOVER] Nova conexão WS estabelecida: {}", next_url);
+                    }
+                    Err(e) => {
+                        error!("❌ [FAILOVER] Falha ao reconectar a {}: {}", next_url, e);
+                    }
+                }
             }
 
             // Atualizar status
@@ -284,8 +293,10 @@ impl LogCollectorV2 {
 
             info!("🔧 Subscrevendo a logs...");
 
-            match Self::subscribe_logs(&provider, &filter).await {
-                Ok(mut stream) => {
+            // CORREÇÃO CRÍTICA: sem timeout aqui, um WS morto silenciosamente bloqueia
+            // este .await para sempre — era isto que congelava o collector em "Connecting"
+            match timeout(Duration::from_secs(15), Self::subscribe_logs(&provider, &filter)).await {
+                Ok(Ok(mut stream)) => {
                     info!("✅ Subscrição ativa - aguardando eventos...");
                     metrics.write().await.connection_status = ConnectionStatus::Connected;
                     reconnect_attempts = 0;
@@ -297,10 +308,16 @@ impl LogCollectorV2 {
                     Self::event_processing_loop(&mut stream, &filter, &event_tx, &metrics, &config)
                         .await;
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("❌ Falha na subscrição: {}", e);
                     metrics.write().await.connection_status =
                         ConnectionStatus::Error(e.to_string());
+                }
+                Err(_) => {
+                    error!("⏱️ TIMEOUT ao subscrever (15s) — WS provavelmente morto, forçando failover");
+                    metrics.write().await.connection_status =
+                        ConnectionStatus::Error("subscribe timeout".to_string());
+                    reconnect_attempts = reconnect_attempts.saturating_add(3);
                 }
             }
 

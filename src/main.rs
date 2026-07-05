@@ -218,17 +218,77 @@ async fn main() -> eyre::Result<()> {
 
     // 🚨 CORREÇÃO: Criar pool_cache GLOBAL antes do bootstrap (usado também no event processor)
     use orca_mev::cache::PoolCache;
-    let pool_cache = Arc::new(PoolCache::new());
+    const RESERVES_CACHE_PATH: &str = "pool_reserves_cache.json";
+    let pool_cache = Arc::new(
+        match tokio::fs::read_to_string(RESERVES_CACHE_PATH).await {
+            Ok(data) => match PoolCache::from_json(&data) {
+                Ok(loaded) => {
+                    info!("📦 [RESERVES-CACHE] {} pools com reserves carregados do disco — sem recomeçar do zero", loaded.len());
+                    loaded
+                }
+                Err(e) => {
+                    warn!("⚠️ [RESERVES-CACHE] Falha ao parsear cache em disco ({}), a começar vazio", e);
+                    PoolCache::new()
+                }
+            },
+            Err(_) => {
+                info!("📦 [RESERVES-CACHE] Sem cache em disco ainda — primeiro arranque");
+                PoolCache::new()
+            }
+        }
+    );
 
-    // 🚨 CORREÇÃO 4: Bootstrap SIMPLES (sem Multicall3) - chamadas individuais getReserves
-    // CORREÇÃO: Usar bootstrap_simple em vez de Multicall3 para evitar "execution reverted"
-    info!("🚀 [BOOTSTRAP] Inicializando reserves via chamadas individuais (simple)...");
+    // Guardar reserves periodicamente — para nunca mais perder progresso de bootstrap num restart
+    {
+        let pool_cache_save = pool_cache.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(tokio::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                match pool_cache_save.to_json() {
+                    Ok(json) => {
+                        if let Err(e) = tokio::fs::write(RESERVES_CACHE_PATH, json).await {
+                            warn!("⚠️ [RESERVES-CACHE] Falha ao guardar: {}", e);
+                        } else {
+                            info!("💾 [RESERVES-CACHE] {} pools guardados em disco", pool_cache_save.len());
+                        }
+                    }
+                    Err(e) => warn!("⚠️ [RESERVES-CACHE] Falha ao serializar: {}", e),
+                }
+            }
+        });
+    }
+
+    // Bootstrap: Multicall3 primeiro (rapido -- 1 RPC call para N pools),
+    // com fallback automatico para chamadas individuais se falhar ou nao
+    // inicializar nenhuma pool.
+    info!("🚀 [BOOTSTRAP] A tentar Multicall3 (rápido), com fallback para individual...");
     let pool_addresses = discovery_engine.get_all_pool_addresses().await;
 
-    // Placeholders removidos — bootstrap insere directamente com dados reais
+    // CORREÇÃO: pré-popular o cache com token0/token1/fee/dex_type reais ANTES do
+    // Multicall3 -- sem isto, process_batch() não encontra a pool no cache (Some(state)
+    // falha) e a inicialização fica sempre em 0, mesmo com a chamada RPC a funcionar.
+    {
+        use orca_mev::cache::pool_cache::PoolState;
+        let pool_data_list = discovery_engine.get_all_pool_data().await;
+        let mut prepopulated = 0u64;
+        for pd in pool_data_list {
+            if !pool_cache.contains(&pd.address) {
+                // Converter DexType de discovery::DexType para contracts::DexType
+                // (são dois enums distintos, mesmo nome, módulos diferentes)
+                let dex_type = match pd.dex_type {
+                    orca_mev::discovery::DexType::UniswapV3 => orca_mev::contracts::DexType::UniswapV3,
+                    orca_mev::discovery::DexType::UniswapV2 => orca_mev::contracts::DexType::UniswapV2,
+                    orca_mev::discovery::DexType::Aerodrome => orca_mev::contracts::DexType::Aerodrome,
+                };
+                pool_cache.insert(PoolState::new(pd.address, pd.token0, pd.token1, pd.fee, dex_type));
+                prepopulated += 1;
+            }
+        }
+        info!("📦 [BOOTSTRAP] {} pools pré-populadas no cache (token0/token1 reais)", prepopulated);
+    }
 
-    // 🚨 CORREÇÃO: Usar bootstrap_simple em vez de Multicall3
-    use orca_mev::cache::bootstrap_simple;
+    use orca_mev::cache::{bootstrap_simple, MulticallBootstrap, BootstrapConfig};
     let bootstrap_provider = {
         let provider_handle = provider.inner();
         let provider_clone = {
@@ -237,7 +297,33 @@ async fn main() -> eyre::Result<()> {
         };
         Arc::new(provider_clone)
     };
-    match bootstrap_simple(bootstrap_provider, pool_cache.clone(), &pool_addresses).await {
+
+    let multicall_provider_rwlock = Arc::new(tokio::sync::RwLock::new((*bootstrap_provider).clone()));
+    let multicall = MulticallBootstrap::new(
+        multicall_provider_rwlock,
+        pool_cache.clone(),
+        BootstrapConfig::default(),
+    );
+
+    let bootstrap_final_result: eyre::Result<usize> = match multicall
+        .bootstrap_reserves(&pool_addresses)
+        .await
+    {
+        Ok(n) if n > 0 => {
+            info!("🚀 [BOOTSTRAP] Multicall3 inicializou {} pools rapidamente", n);
+            Ok(n)
+        }
+        Ok(_) => {
+            warn!("⚠️ [BOOTSTRAP] Multicall3 inicializou 0 pools, a usar fallback individual");
+            bootstrap_simple(bootstrap_provider.clone(), pool_cache.clone(), &pool_addresses).await
+        }
+        Err(e) => {
+            warn!("⚠️ [BOOTSTRAP] Multicall3 falhou ({}), a usar fallback individual", e);
+            bootstrap_simple(bootstrap_provider.clone(), pool_cache.clone(), &pool_addresses).await
+        }
+    };
+
+    match bootstrap_final_result {
         Ok(initialized) => {
             info!(
                 "🎉 [BOOTSTRAP] {} pools inicializadas com sucesso",
@@ -300,6 +386,133 @@ async fn main() -> eyre::Result<()> {
         Err(e) => {
             error!("❌ [BOOTSTRAP] Falha no bootstrap simple: {}", e);
             warn!("⚠️ [BOOTSTRAP] Continuando sem inicialização de reserves");
+        }
+    }
+
+    // ── LIGAÇÃO AO VIVO ÀS POOLS DESCOBERTAS ──
+    // CORREÇÃO CRÍTICA: até aqui, só as ~90 pools fixas do PoolRegistry
+    // (provider.rs) recebiam eventos Sync em tempo real. As 5000+ pools
+    // descobertas via discovery/Multicall ficavam congeladas no snapshot do
+    // arranque para sempre -- explica oportunidades que parecem boas mas
+    // nunca sobrevivem até à execução (dados cada vez mais velhos).
+    {
+        const SYNC_TOPIC: &str = "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
+        let sync_topic: alloy::primitives::FixedBytes<32> = SYNC_TOPIC.parse().expect("hash Sync inválido");
+
+        let wss_url = std::env::var("RPC_WSS_URLS")
+            .unwrap_or_default()
+            .split(',')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        if wss_url.is_empty() {
+            warn!("[LIVE-REFRESH] RPC_WSS_URLS vazio -- actualização ao vivo desligada");
+        } else {
+            const CHUNK_SIZE: usize = 800;
+
+            let pool_cache_super = pool_cache.clone();
+            let wss_url_super = wss_url.clone();
+            tokio::spawn(async move {
+                // CORREÇÃO CRÍTICA v2: a versão anterior acumulava uma task
+                // (e uma conexão WS própria) por cada lote de pools novas,
+                // PARA SEMPRE -- depois de 10h chegou a 67 conexões WS
+                // simultâneas, saturando o canal interno do pubsub e
+                // colapsando silenciosamente a subscrição principal de
+                // eventos (Status continuava "Connected", mas zero eventos
+                // novos chegavam -- ~98% das execuções passaram a falhar por
+                // "Block deadline exceeded" outra vez, mesmo com o timing já
+                // corrigido). Agora: a cada re-snapshot, abortamos TODAS as
+                // tasks antigas e relançamos um conjunto consolidado e
+                // completo -- número de tasks vivas fica sempre limitado ao
+                // necessário para a cobertura atual, nunca cresce sem fim.
+                let mut active_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+
+                loop {
+                    // Re-snapshot do cache: cobertura completa e actual, não incremental.
+                    let all_addrs: Vec<alloy::primitives::Address> = pool_cache_super
+                        .get_sample_pools(pool_cache_super.len())
+                        .iter()
+                        .map(|s| s.address)
+                        .collect();
+
+                    // Abortar todas as subscrições antigas antes de relançar --
+                    // evita acumulação indefinida de conexões WS.
+                    for handle in active_handles.drain(..) {
+                        handle.abort();
+                    }
+
+                    if !all_addrs.is_empty() {
+                        let chunks: Vec<Vec<alloy::primitives::Address>> = all_addrs
+                            .chunks(CHUNK_SIZE)
+                            .map(|c| c.to_vec())
+                            .collect();
+                        info!(
+                            "📡 [LIVE-REFRESH] Reconsolidando {} pools em {} lote(s) (substituindo subscrições antigas)",
+                            all_addrs.len(),
+                            chunks.len()
+                        );
+
+                        for (idx, chunk) in chunks.into_iter().enumerate() {
+                            let pool_cache_live = pool_cache_super.clone();
+                            let wss_url_chunk = wss_url_super.clone();
+                            let handle = tokio::spawn(async move {
+                                loop {
+                                    use alloy::providers::Provider as _;
+                                    let conn = alloy::providers::ProviderBuilder::new()
+                                        .on_ws(alloy::transports::ws::WsConnect::new(wss_url_chunk.clone()))
+                                        .await;
+                                    let provider = match conn {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            warn!("[LIVE-REFRESH] lote {} falhou a ligar: {} -- tentando de novo em 10s", idx, e);
+                                            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                                            continue;
+                                        }
+                                    };
+                                    let filter = alloy::rpc::types::Filter::new()
+                                        .address(chunk.clone())
+                                        .event_signature(sync_topic);
+                                    match provider.subscribe_logs(&filter).await {
+                                        Ok(mut stream) => {
+                                            info!("[LIVE-REFRESH] lote {} activo ({} pools)", idx, chunk.len());
+                                            loop {
+                                                match tokio::time::timeout(
+                                                    tokio::time::Duration::from_secs(120),
+                                                    stream.recv(),
+                                                )
+                                                .await
+                                                {
+                                                    Ok(Ok(log)) => {
+                                                        let data = log.data().data.as_ref();
+                                                        if data.len() >= 64 {
+                                                            let r0 = alloy::primitives::U256::from_be_slice(&data[0..32]);
+                                                            let r1 = alloy::primitives::U256::from_be_slice(&data[32..64]);
+                                                            let block = log.block_number.unwrap_or(0);
+                                                            pool_cache_live.update_sync_event(log.address(), r0, r1, block);
+                                                        }
+                                                    }
+                                                    Ok(Err(_)) | Err(_) => break, // stream caiu ou ficou 120s sem nada -- reconectar
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("[LIVE-REFRESH] lote {} falhou subscrição: {}", idx, e);
+                                        }
+                                    }
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                                }
+                            });
+                            active_handles.push(handle);
+                        }
+                    }
+
+                    // Intervalo de re-snapshot e reconsolidação: 5 minutos equilibra
+                    // cobertura de pools novas vs overhead de reconectar tudo.
+                    tokio::time::sleep(tokio::time::Duration::from_secs(600)).await;
+                }
+            });
         }
     }
 
@@ -479,9 +692,11 @@ async fn main() -> eyre::Result<()> {
     // ═══════════════════════════════════════════════════════════
     // 🐋 ORCA ENGINE - PREDADOR DE ELITE (PASSIVE_OBSERVER)
     // ═══════════════════════════════════════════════════════════
+    let eth_price_feed = orca_mev::pricing::EthPriceFeed::new();
     let mut orca_config = orca_mev::orca::OrcaConfig::default();
     orca_config.dry_run = app_config.dry_run;
-    let mut orca_engine = orca_mev::orca::OrcaEngine::new(orca_config, discovery_engine.clone()).await;
+    let mut orca_engine = orca_mev::orca::OrcaEngine::new(orca_config, discovery_engine.clone(), eth_price_feed.clone()).await;
+    orca_engine.spawn_block_poller();
     orca_engine.set_shared_pool_cache((*pool_cache).clone());
     let shared_liquidity_count = pool_cache.count_pools_with_reserves();
     info!(
@@ -535,46 +750,32 @@ async fn main() -> eyre::Result<()> {
     // NÃO criar outro consumer aqui — isso causaria "channel lagged"
 
     // Run engine
-    // ── Horário de operação: 07h45 - 21h30 PT ──
-    {
-        use chrono::{Local, Timelike};
-        let now = Local::now();
-        let hour = now.hour();
-        let minute = now.minute();
-        let minutes_now = hour * 60 + minute;
-        let start_minutes = 7 * 60 + 45;  // 07h45
-        let stop_minutes = 21 * 60 + 30;  // 21h30
-        if minutes_now < start_minutes || minutes_now >= stop_minutes {
-            info!("[SCHEDULE] Fora do horário de operação (07h45-21h30 PT). A aguardar...");
-            let wait_mins = if minutes_now < start_minutes {
-                start_minutes - minutes_now
-            } else {
-                (24 * 60 - minutes_now) + start_minutes
-            };
-            tokio::time::sleep(tokio::time::Duration::from_secs(wait_mins as u64 * 60)).await;
-        }
-    }
+
 
     // ── Heartbeat Discord a cada hora ──
     {
         let discord_hb = Arc::new(orca_mev::notifications::DiscordNotifier::new(
-            &std::env::var("DISCORD_WEBHOOK").unwrap_or_default()
+            &std::env::var("DISCORD_WEBHOOK").unwrap_or_default(),
+            eth_price_feed.clone()
         ));
         let pool_cache_hb = pool_cache.clone();
-        let opp_log_path = "logs/opportunities.csv".to_string();
+        // CORRECAO: ler execucoes REAIS confirmadas (logs/executions.csv), nao
+        // oportunidades detectadas (logs/opportunities.csv) -- esse CSV regista
+        // TODAS as deteccoes (milhares/hora), nunca executadas na maioria, o que
+        // produzia numeros impossiveis no Discord (ex: 36947/h execucoes).
+        let exec_log_path = "logs/executions.csv".to_string();
         tokio::spawn(async move {
             let mut last_opps = 0u64;
             let mut last_profit = 0.0f64;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-                // Ler stats do CSV
-                let content = tokio::fs::read_to_string(&opp_log_path).await.unwrap_or_default();
+                let content = tokio::fs::read_to_string(&exec_log_path).await.unwrap_or_default();
                 let lines: Vec<&str> = content.lines().skip(1).collect();
                 let total_opps = lines.len() as u64;
                 let total_profit: f64 = lines.iter()
-                    .filter_map(|l| l.split(',').nth(8).and_then(|v| v.parse::<f64>().ok()))
-                    .sum();
-                let hour_opps = total_opps - last_opps;
+                    .filter_map(|l| l.split(',').nth(2).and_then(|v| v.parse::<f64>().ok()))
+                    .sum::<f64>() * 1800.0; // profit_eth -> EUR (preco fixo aqui; Discord usa preco ao vivo)
+                let hour_opps = total_opps.saturating_sub(last_opps);
                 let hour_profit = total_profit - last_profit;
                 let block = pool_cache_hb.len() as u64;
                 discord_hb.notify_heartbeat(block, hour_opps, hour_profit).await;

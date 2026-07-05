@@ -1,0 +1,95 @@
+--- contracts/OrcaExecutor.sol.orig
++++ contracts/OrcaExecutor.sol
+@@ -202,7 +205,7 @@
+         // 6. Hop count (1 byte)
+         uint8 hopCount = uint8(route[80]);
+         require(hopCount >= 2 && hopCount <= 4, "Invalid hop count");
+-        require(route.length >= 81 + hopCount * 25, "Route length mismatch");
++        require(route.length >= 81 + hopCount * 41, "Route length mismatch");
+ 
+         // Build flash loan request
+         address[] memory tokens = new address[](1);
+@@ -293,28 +296,19 @@
+         address currentToken = tokenIn;
+ 
+         for (uint8 i = 0; i < hopCount; i++) {
+-            uint256 offset = 81 + i * 25;
++            uint256 offset = 81 + i * 41;
+ 
+-            // Decode hop from route bytes
++            // Decode hop — 41 bytes: pool(20) + tokenOut(20) + dexAndFee(1)
+             address pool;
+             address tokenOut;
+             uint8 dexAndFee;
+ 
+             assembly ("memory-safe") {
+-                // Pool: 20 bytes
+-                pool := shr(96, calldataload(add(route.offset, offset)))
+-
+-                // TokenOut suffix: 4 bytes (últimos 4 do address)
+-                let tokenSuffix := shr(224, calldataload(add(route.offset, add(offset, 20))))
+-
+-                // Dex/Fee byte
+-                dexAndFee := byte(0, calldataload(add(route.offset, add(offset, 24))))
++                pool     := shr(96, calldataload(add(route.offset, offset)))
++                tokenOut := shr(96, calldataload(add(route.offset, add(offset, 20))))
++                dexAndFee := byte(0, calldataload(add(route.offset, add(offset, 40))))
+             }
+ 
+-            // Reconstruir tokenOut completo (os primeiros 16 bytes são zeros conhecidos)
+-            // Para tokens comuns na BASE, usamos lookup table
+-            tokenOut = _resolveToken(tokenOut);
+-
+             // Determinar tipo de DEX
+             bool isAerodrome = (dexAndFee & 0x80) != 0;
+             uint8 feeIndex = dexAndFee & 0x7F;
+@@ -362,25 +362,30 @@
+         bool zeroForOne = tokenIn < tokenOut;
+         int256 amountSpecified = int256(IERC20(tokenIn).balanceOf(address(this)));
+ 
+-        // Assembly call to V3 pool
+         bytes memory data = abi.encode(tokenIn, tokenOut);
+ 
+-        // Use STATICCALL para estimar, depois CALL real
+-        // (Simplificado — produção usa exact output mode)
+-        (bool success, bytes memory result) = pool.call(
++        pendingV3Pool = pool;
++        (bool success,) = pool.call(
+             abi.encodeWithSelector(
+                 IUniswapV3Pool.swap.selector,
+                 address(this),
+                 zeroForOne,
+                 amountSpecified,
+-                zeroForOne ? 4295128740 : 1461446703485210103287273052203988822378723970341,
++                zeroForOne ? uint160(4295128740) : uint160(1461446703485210103287273052203988822378723970341),
+                 data
+             )
+         );
+-
++        pendingV3Pool = address(0);
+         require(success, "V3 swap failed");
+     }
+ 
++    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
++        require(msg.sender == pendingV3Pool, "ORCA: callback nao autorizado");
++        (address tokenIn,) = abi.decode(data, (address, address));
++        uint256 amountToPay = amount0Delta > 0 ? uint256(amount0Delta) : uint256(amount1Delta);
++        _transfer(tokenIn, msg.sender, amountToPay);
++    }
++
+     // ═══════════════════════════════════════════
+     // HELPER FUNCTIONS
+     // ═══════════════════════════════════════════
+@@ -451,12 +451,6 @@
+         return 0;
+     }
+ 
+-    function _resolveToken(address /*suffix*/) internal pure returns (address) {
+-        // Lookup table simplificada
+-        // Em produção: mapear os 4-byte suffix para addresses completos
+-        return address(0);
+-    }
+-
+     // ═══════════════════════════════════════════
+     // RECEIVE / FALLBACK
+     // ═══════════════════════════════════════════

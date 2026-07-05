@@ -688,10 +688,10 @@ pub async fn update_pool_from_swap(&self, swap: &NormalizedSwapEvent) {
                 let diff = profit_plus - profit_minus;
                 let delta_2x = delta * U256::from(2);
                 if delta_2x.is_zero() { break; }
-                diff.to::<u128>() as i128
+                diff.try_into().unwrap_or(u128::MAX) as i128
             } else {
                 let diff = profit_minus - profit_plus;
-                -(diff.to::<u128>() as i128)
+                -(diff.try_into().unwrap_or(u128::MAX) as i128)
             };
             
             // Derivada segunda: f''(x) ≈ (f(x+δ) - 2f(x) + f(x-δ)) / δ²
@@ -700,17 +700,17 @@ pub async fn update_pool_from_swap(&self, swap: &NormalizedSwapEvent) {
                 let sum = profit_plus + profit_minus;
                 if sum > mid_term {
                     let diff = sum - mid_term;
-                    diff.to::<u128>() as i128
+                    diff.try_into().unwrap_or(u128::MAX) as i128
                 } else {
                     let diff = mid_term - sum;
-                    -(diff.to::<u128>() as i128)
+                    -(diff.try_into().unwrap_or(u128::MAX) as i128)
                 }
             };
             
             // Newton-Raphson: x_new = x - f'(x) / f''(x)
             // Se f''(x) ≈ 0, usar ajuste proporcional
             let new_amount = if second_derivative.abs() > 1000 {
-                let adjustment = (amount_in.to::<u128>() as i128 * first_derivative) / second_derivative;
+                let adjustment = (amount_in.try_into().unwrap_or(u128::MAX) as i128 * first_derivative) / second_derivative;
                 if adjustment > 0 {
                     amount_in.saturating_sub(U256::from(adjustment.unsigned_abs()))
                 } else {

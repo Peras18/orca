@@ -36,7 +36,7 @@ pub fn find_optimal_input_2hop(
 
     let optimal = num - U256::from(r_in1);
     let max_safe = U256::from(r_in1) * U256::from(30) / U256::from(100); // 30% max impact
-    let input = optimal.min(max_safe).to::<u128>();
+    let input = optimal.min(max_safe).try_into().unwrap_or(u128::MAX);
 
     // Calcular lucro real com o input escolhido
     let mid = get_amount_out_v2(input, r_in1, r_out1, f1, fee_denom)?;
@@ -204,7 +204,7 @@ fn get_amount_out_v2(
         return Some(0);
     }
 
-    Some((numerator / denominator).to::<u128>())
+    Some((numerator / denominator).try_into().unwrap_or(u128::MAX))
 }
 
 #[cfg(test)]

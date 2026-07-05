@@ -74,6 +74,9 @@ contract OrcaExecutor is IFlashLoanRecipient {
     // Kill switch: se true, todas as execuções revertem
     bool public killed;
     
+    // Pool V3 autorizada durante swap callback (guarda anti-reentrancy)
+    address private pendingV3Pool;
+
     // Carteiras autorizadas (WalletRotator)
     mapping(address => bool) public authorizedCallers;
     
@@ -199,7 +202,7 @@ contract OrcaExecutor is IFlashLoanRecipient {
         // 6. Hop count (1 byte)
         uint8 hopCount = uint8(route[80]);
         require(hopCount >= 2 && hopCount <= 4, "Invalid hop count");
-        require(route.length >= 81 + hopCount * 25, "Route length mismatch");
+        require(route.length >= 81 + hopCount * 41, "Route length mismatch");
 
         // Build flash loan request
         address[] memory tokens = new address[](1);
@@ -252,6 +255,7 @@ contract OrcaExecutor is IFlashLoanRecipient {
         uint256 balanceAfter = _balance(tokens[0]);
 
         // SLIPPAGE GUARD ON-CHAIN: verificar profit após swaps
+        require(balanceAfter >= balanceBefore, "ORCA: LOSS");
         uint256 grossProfit = balanceAfter - balanceBefore;
         require(grossProfit >= fee, "ORCA: cannot repay loan");
 
@@ -263,8 +267,16 @@ contract OrcaExecutor is IFlashLoanRecipient {
         uint256 repayAmount = loanAmount + fee;
         _transfer(tokens[0], BALANCER_VAULT, repayAmount);
 
-        // Enviar lucro para treasury (nunca acumula no executor)
-        uint256 treasuryAmount = balanceAfter - repayAmount;
+        // CORREÇÃO: treasuryAmount calculado a partir de balanceAfter -
+        // repayAmount assumia implicitamente que balanceBefore == loanAmount
+        // exactamente -- se o contrato tivesse qualquer saldo residual de
+        // tokens[0] antes do flash loan (resíduo de execução anterior,
+        // dust, ou transferência directa), balanceBefore > loanAmount,
+        // tornando este cálculo incorrecto e sujeito a panic mesmo com
+        // grossProfit positivo confirmado no require acima. Calcular a
+        // partir de grossProfit (já validado >= fee) é matematicamente
+        // equivalente no caso normal, e seguro em todos os casos.
+        uint256 treasuryAmount = grossProfit - fee;
         if (treasuryAmount > 0) {
             _transfer(tokens[0], treasury, treasuryAmount);
         }
@@ -290,7 +302,7 @@ contract OrcaExecutor is IFlashLoanRecipient {
         address currentToken = tokenIn;
 
         for (uint8 i = 0; i < hopCount; i++) {
-            uint256 offset = 81 + i * 25;
+            uint256 offset = 81 + i * 41;
             
             // Decode hop from route bytes
             address pool;
@@ -298,19 +310,11 @@ contract OrcaExecutor is IFlashLoanRecipient {
             uint8 dexAndFee;
             
             assembly ("memory-safe") {
-                // Pool: 20 bytes
                 pool := shr(96, calldataload(add(route.offset, offset)))
-                
-                // TokenOut suffix: 4 bytes (últimos 4 do address)
-                let tokenSuffix := shr(224, calldataload(add(route.offset, add(offset, 20))))
-                
-                // Dex/Fee byte
-                dexAndFee := byte(0, calldataload(add(route.offset, add(offset, 24))))
-            }
+                tokenOut := shr(96, calldataload(add(route.offset, add(offset, 20))))
+                dexAndFee := byte(0, calldataload(add(route.offset, add(offset, 40))))
             
-            // Reconstruir tokenOut completo (os primeiros 16 bytes são zeros conhecidos)
-            // Para tokens comuns na BASE, usamos lookup table
-            tokenOut = _resolveToken(tokenOut);
+            }
             
             // Determinar tipo de DEX
             bool isAerodrome = (dexAndFee & 0x80) != 0;
@@ -368,20 +372,40 @@ contract OrcaExecutor is IFlashLoanRecipient {
         // Assembly call to V3 pool
         bytes memory data = abi.encode(tokenIn, tokenOut);
         
-        // Use STATICCALL para estimar, depois CALL real
-        // (Simplificado — produção usa exact output mode)
-        (bool success, bytes memory result) = pool.call(
+        pendingV3Pool = pool;
+        (bool success, bytes memory returnData) = pool.call(
             abi.encodeWithSelector(
                 IUniswapV3Pool.swap.selector,
                 address(this),
                 zeroForOne,
                 amountSpecified,
-                zeroForOne ? 4295128740 : 1461446703485210103287273052203988822378723970341,
+                zeroForOne ? uint160(4295128740) : uint160(1461446703485210103287273052203988822378723970341),
                 data
             )
         );
         
-        require(success, "V3 swap failed");
+        pendingV3Pool = address(0);
+
+        // DIAGNÓSTICO TEMPORÁRIO: propagar a revert reason REAL do pool em
+        // vez do "V3 swap failed" genérico -- precisamos de saber a causa
+        // exata (liquidez insuficiente, amount zero, etc.) antes de decidir
+        // qualquer correção. Reverter aqui ainda aborta a simulação eth_call
+        // sem gastar gás real, exatamente como antes -- só muda a mensagem.
+        if (!success) {
+            if (returnData.length > 0) {
+                assembly {
+                    revert(add(returnData, 32), mload(returnData))
+                }
+            }
+            revert("V3 swap failed (sem revert reason do pool)");
+        }
+    }
+
+    function uniswapV3SwapCallback(int256 amount0Delta, int256 amount1Delta, bytes calldata data) external {
+        require(msg.sender == pendingV3Pool, "ORCA: callback nao autorizado");
+        (address tokenIn,) = abi.decode(data, (address, address));
+        uint256 amountToPay = amount0Delta > 0 ? uint256(amount0Delta) : uint256(amount1Delta);
+        _transfer(tokenIn, msg.sender, amountToPay);
     }
     
     // ═══════════════════════════════════════════
@@ -449,11 +473,6 @@ contract OrcaExecutor is IFlashLoanRecipient {
         return 0;
     }
     
-    function _resolveToken(address /*suffix*/) internal pure returns (address) {
-        // Lookup table simplificada
-        // Em produção: mapear os 4-byte suffix para addresses completos
-        return address(0);
-    }
     
     // ═══════════════════════════════════════════
     // RECEIVE / FALLBACK

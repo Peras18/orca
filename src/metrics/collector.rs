@@ -58,7 +58,7 @@ impl MetricsCollector {
         
         if success {
             current.opportunities_won += 1;
-            let profit_u128 = profit.to::<u128>();
+            let profit_u128 = profit.try_into().unwrap_or(u128::MAX);
             *current.profit_by_strategy.entry(strategy.to_string()).or_insert(0) += profit_u128;
         }
         
