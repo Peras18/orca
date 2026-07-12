@@ -1936,6 +1936,30 @@ impl Strategy for OrcaEngine {
                             debug!("[KALMAN-FILTER] candidato descartado -- deriva de preço >0.5% prevista no horizonte");
                             continue;
                         }
+                        // INOVAÇÃO: filtro preditivo de lucro -- soma a deriva de preço
+                        // prevista (Kalman) em todos os hops V3 do ciclo e compara com a
+                        // margem de lucro relativa do próprio ciclo. Se a deriva esperada
+                        // no horizonte de latência já é maior que a margem, o ciclo está
+                        // matematicamente condenado a "ORCA: LOSS" antes de gastarmos um
+                        // eth_call nele -- ataca diretamente o padrão de 22/22 LOSS visto
+                        // em produção (sizing correto, mas spread já fechado na execução).
+                        let total_predicted_drift: f64 = best.hops.iter()
+                            .filter(|h| h.dex_type == DexType::UniswapV3)
+                            .filter_map(|h| self.kalman_price.get(&h.pool).map(|e| e.relative_drift(1900.0)))
+                            .sum();
+                        let input_size_f64 = best.hops.first()
+                            .map(|h| h.reserve_in.try_into().unwrap_or(u128::MAX) as f64 / 1e18)
+                            .unwrap_or(1.0).max(1e-9);
+                        let profit_margin_ratio = (best.net_profit.try_into().unwrap_or(u128::MAX) as f64 / 1e18) / input_size_f64;
+                        const DRIFT_SAFETY_MULTIPLIER: f64 = 1.5;
+                        if total_predicted_drift > 0.0 && profit_margin_ratio > 0.0
+                            && total_predicted_drift > profit_margin_ratio * DRIFT_SAFETY_MULTIPLIER {
+                            debug!(
+                                "[PROFIT-PREDICT-FILTER] descartado -- deriva prevista {:.4}% > margem*{} ({:.4}%)",
+                                total_predicted_drift * 100.0, DRIFT_SAFETY_MULTIPLIER, profit_margin_ratio * DRIFT_SAFETY_MULTIPLIER * 100.0
+                            );
+                            continue;
+                        }
                         // CORREÇÃO (rigorosa, não aproximada): pesquisa ternária sobre o
                         // tamanho do flash loan, usando a fórmula AMM real de cada hop com
                         // as reserves já conhecidas (zero chamadas à rede). A curva de lucro
