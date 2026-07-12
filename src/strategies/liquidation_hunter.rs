@@ -106,7 +106,7 @@ impl LiquidationHunter {
         pos: &BorrowPosition,
         gas_cost_usd: f64,
     ) -> Option<f64> {
-        let collateral_price = self.token_prices.get(&pos.collateral_token)?;
+        let _collateral_price = self.token_prices.get(&pos.collateral_token)?;
         let debt_price = self.token_prices.get(&pos.debt_token)?;
 
         // Máximo liquidável: 50% da dívida (Aave/Moonwell limit)
@@ -131,7 +131,7 @@ impl LiquidationHunter {
     }
 
     /// Simula liquidação para DRY_RUN
-    pub fn simulate_liquidation(&mut self, pos: &BorrowPosition, profit_usd: f64) {
+    pub fn simulate_liquidation(&mut self, _pos: &BorrowPosition, profit_usd: f64) {
         self.simulated_liquidations += 1;
         self.simulated_profit_usd += profit_usd;
         info!(

@@ -3,7 +3,6 @@ use alloy::primitives::U256;
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use serde::{Serialize, Deserialize};
-use tracing::info;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StrategyMetrics {

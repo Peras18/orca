@@ -5,7 +5,7 @@ use crossbeam::channel::{bounded, Receiver};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::{interval, sleep, timeout};
+use tokio::time::{interval, sleep};
 use tracing::{error, info, warn, trace};
 
 use crate::types::{MempoolTx, PriceUpdate};
@@ -562,7 +562,7 @@ impl Provider {
         wss_url: &str,
         rpc_urls: Arc<Vec<String>>,
         provider: &Arc<RwLock<RootProvider<BoxTransport>>>,
-        connection_state: &Arc<RwLock<ConnectionState>>,
+        _connection_state: &Arc<RwLock<ConnectionState>>,
         gas_info: &Arc<RwLock<GasInfo>>,
     ) {
         let mut ping_interval = interval(Duration::from_secs(30)); // Ping a cada 30s

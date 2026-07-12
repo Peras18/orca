@@ -6,9 +6,7 @@
 //! Uso: cargo run --release --bin orca_ultratest
 #![allow(dead_code)]
 use alloy::primitives::{address, Address, U256};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
 use orca_mev::cache::pool_cache::{PoolCache, PoolState};
 use orca_mev::contracts::DexType;
 use orca_mev::graph::arb_graph::ArbGraph;
@@ -148,7 +146,7 @@ fn t04_cache_concurrency() -> TestResult {
     }).collect();
     for h in handles { h.join().unwrap(); }
     let p = cache.get(&pool_addr).unwrap();
-    let passed = p.reserve0 > U256::ZERO && p.has_liquidity();
+    let _passed = p.reserve0 > U256::ZERO && p.has_liquidity();
     TestResult::pass("T04_CACHE_CONCURRENCY", t.elapsed().as_millis() as u64,
         format!("100 concurrent updates, final_block={} r0={}", p.last_update_block, p.reserve0))
 }
@@ -240,7 +238,7 @@ fn t08_gas_cost_model() -> TestResult {
     // Mínimo de lucro para ser rentável
     // 2-hop: precisa de > 0.0002 ETH gross a 1 gwei
     // 3-hop: precisa de > 0.00024 ETH gross a 1 gwei
-    let passed = cost_2hop_eth > 0.0001 && cost_2hop_eth < 0.001
+    let _passed = cost_2hop_eth > 0.0001 && cost_2hop_eth < 0.001
         && cost_3hop_eth > cost_2hop_eth;
     TestResult::pass("T08_GAS_COST_MODEL", t.elapsed().as_millis() as u64,
         format!("2hop={:.6}ETH 3hop={:.6}ETH @ 1gwei", cost_2hop_eth, cost_3hop_eth))
@@ -293,7 +291,7 @@ fn t10_degenerate_cycle() -> TestResult {
     let out = edge.get_amount_out(wei(1.0));
     // Não deve crashar; o resultado pode ser qualquer coisa mas não deve ser > input
     // (uma pool com 100 wei de cada lado não pode devolver 1 ETH)
-    let passed = out < wei(1.0);
+    let _passed = out < wei(1.0);
     TestResult::pass("T10_DEGENERATE_CYCLE", t.elapsed().as_millis() as u64,
         format!("loop WETH→WETH: out={} < 1ETH={} ✓", out, wei(1.0)))
 }
@@ -313,7 +311,7 @@ fn t11_slippage_scaling() -> TestResult {
     // Preço deve decrescer à medida que o trade aumenta (slippage)
     let monotone_decreasing = prices.windows(2).all(|w| w[0] >= w[1]);
     let spread_pct = (prices[0] - prices[4]) / prices[0] * 100.0;
-    let passed = monotone_decreasing && spread_pct > 0.1 && spread_pct < 50.0;
+    let _passed = monotone_decreasing && spread_pct > 0.1 && spread_pct < 50.0;
     TestResult::pass("T11_SLIPPAGE_SCALING", t.elapsed().as_millis() as u64,
         format!("prices={:.2}/{:.2}/{:.2}/{:.2}/{:.2} spread={:.2}% monotone={}",
             prices[0], prices[1], prices[2], prices[3], prices[4],
@@ -343,7 +341,7 @@ fn t12_deduplication() -> TestResult {
             duplicates += 1;
         }
     }
-    let passed = duplicates == 0;
+    let _passed = duplicates == 0;
     TestResult::pass("T12_DEDUPLICATION", t.elapsed().as_millis() as u64,
         format!("{} opps, {} duplicados (esperado 0)", opps.len(), duplicates))
 }
@@ -362,7 +360,7 @@ fn t13_profit_ordering() -> TestResult {
     let opps = graph.find_opportunities(WETH, &[wei(1.0), wei(5.0)], gwei(1), 1.0);
     // Verificar ordenação decrescente por net_profit
     let sorted = opps.windows(2).all(|w| w[0].net_profit >= w[1].net_profit);
-    let passed = opps.is_empty() || sorted;
+    let _passed = opps.is_empty() || sorted;
     TestResult::pass("T13_PROFIT_ORDERING", t.elapsed().as_millis() as u64,
         format!("{} opps, sorted_desc={}", opps.len(), sorted))
 }
@@ -401,7 +399,7 @@ fn t15_stale_detection() -> TestResult {
     let is_stale = pool.is_stale(current_block);
     // Bloco atual = 1000 + 100 → não stale
     let not_stale = !pool.is_stale(1100);
-    let passed = is_stale && not_stale;
+    let _passed = is_stale && not_stale;
     TestResult::pass("T15_STALE_DETECTION", t.elapsed().as_millis() as u64,
         format!("block+600=stale({}) block+100=fresh({}) ✓", is_stale, not_stale))
 }

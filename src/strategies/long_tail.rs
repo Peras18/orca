@@ -10,7 +10,6 @@ use parking_lot::RwLock;
 use tracing::info;
 
 use crate::cache::pool_cache::PoolCache;
-use crate::contracts::DexType;
 
 /// Scanner de tokens mid-cap (1M-50M market cap)
 #[derive(Debug)]

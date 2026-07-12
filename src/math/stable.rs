@@ -110,7 +110,7 @@ pub fn get_amount_out_stable(
         return None;
     }
 
-    /// Normaliza para 18 decimais
+    // Normaliza para 18 decimais
     let scale = |a: u128, d: u8| -> u128 {
         match d.cmp(&18) {
             std::cmp::Ordering::Less => a.saturating_mul(10u128.pow((18 - d) as u32)),

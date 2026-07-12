@@ -5,7 +5,7 @@
 //! 
 //! Endereço Multicall3: 0xcA11bde05977b3631167028862bE2a173976CA11
 
-use alloy::primitives::{Address, U256, FixedBytes};
+use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolCall;
 use alloy::providers::{Provider, RootProvider};
 use alloy::rpc::types::eth::TransactionRequest;
@@ -17,7 +17,7 @@ use tracing::{info, debug, warn};
 use alloy::primitives::address;
 
 use crate::cache::PoolCache;
-use crate::cache::pool_cache::{PoolState, build_getreserves_multicall, decode_getreserves_result};
+use crate::cache::pool_cache::{build_getreserves_multicall, decode_getreserves_result};
 use crate::contracts::DexType;
 
 // Interface Multicall3 real -- sol! garante codificacao ABI correcta

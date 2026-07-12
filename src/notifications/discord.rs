@@ -2,8 +2,6 @@ use reqwest::Client;
 use serde_json::json;
 use tracing::warn;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::time::{Instant, Duration};
 use crate::pricing::EthPriceFeed;
 
 #[derive(Clone, Debug)]

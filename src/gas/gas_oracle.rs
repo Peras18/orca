@@ -2,7 +2,6 @@
 use alloy::primitives::U256;
 use std::collections::VecDeque;
 use parking_lot::RwLock;
-use tracing::info;
 
 /// Histórico de fees por bloco
 pub struct GasOracle {

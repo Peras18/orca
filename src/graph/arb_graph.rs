@@ -14,7 +14,6 @@ use tracing::{debug, info, trace, warn};
 
 use crate::cache::pool_cache::{PoolCache, PoolState};
 use crate::contracts::DexType;
-use crate::math::stable::{get_amount_out_stable, get_k_stable};
 use crate::types::Hop;
 
 /// Tamanho máximo de path para SmallVec (evita alocação heap)
@@ -330,6 +329,9 @@ impl ArbGraph {
 
     /// Reconstrói grafo a partir do cache (chamar após cada bloco)
     pub fn rebuild(&mut self, current_block: u64) {
+        if current_block == self.last_rebuild_block && self.last_rebuild_block != 0 {
+            return;
+        }
         self.adjacency.clear();
         self.token_to_pools.clear();
         self.tokens.clear();

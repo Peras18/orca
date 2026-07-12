@@ -9,6 +9,8 @@ pub use v2::{get_amount_out_v2, get_amount_in_v2};
 pub mod v3;
 pub use v3::get_amount_out as get_amount_out_v3;
 pub mod kalman_gas;
+pub mod kalman_price;
+pub mod bayesian_success;
 pub mod transfer_entropy;
 pub mod flash_optimizer;
 pub mod spectral_graph;

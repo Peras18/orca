@@ -2,7 +2,7 @@
 //! 
 //! Se 5 txns falharem em 10 minutos, pausa automática por 30 minutos.
 
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use parking_lot::RwLock;
 use tracing::{error, warn, info};

@@ -3,7 +3,7 @@
 //! Detecta Swap events de valor > threshold, recalcula oportunidade
 //! e submete no mesmo bloco ou seguinte.
 
-use alloy::primitives::{Address, U256, U128};
+use alloy::primitives::{Address, U256};
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use tracing::{debug, info, warn};

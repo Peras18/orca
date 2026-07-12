@@ -3,12 +3,12 @@
 //! Antes de qualquer swap em tokens não-WETH/USDC, faz simulação eth_call
 //! de swap de regresso. Se falhar ou retornar 0, o token é honeypot.
 
-use alloy::primitives::{Address, U256, Bytes};
+use alloy::primitives::{Address, Bytes};
 use alloy::providers::{Provider, RootProvider};
 use alloy::transports::BoxTransport;
 use alloy::network::TransactionBuilder;
 use std::sync::Arc;
-use tracing::{debug, error, warn};
+use tracing::warn;
 use tokio::sync::RwLock;
 
 /// Resultado da verificação honeypot

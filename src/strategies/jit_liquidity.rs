@@ -3,7 +3,7 @@
 //! Detecta swap grande pendente, adiciona liquidez concentrada,
 //! coleta fees, remove imediatamente.
 
-use alloy::primitives::{Address, U256, I256};
+use alloy::primitives::{Address, U256};
 use tracing::info;
 
 /// Pool V3/CL com dados necessários para JIT

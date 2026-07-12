@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 // use std::path::Path; // Not used
-use tracing::{error, info, trace, warn};
+use tracing::{error, info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -708,6 +708,7 @@ async fn main() -> eyre::Result<()> {
     orca_engine.set_telemetry(telemetry_collector.clone());
 
     let orca_for_shutdown = orca_engine.clone();
+    let orca_for_watchdog = orca_engine.clone();
 
     let engine = Arc::new(ArtemisEngine::new(
         collector.clone(),
@@ -792,6 +793,25 @@ async fn main() -> eyre::Result<()> {
         });
     }
 
+    {
+        let watchdog_engine = orca_for_watchdog;
+        tokio::spawn(async move {
+            const WATCHDOG_TIMEOUT_MS: u64 = 180_000;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let last = watchdog_engine.last_event_ms();
+                let stale_ms = now_ms.saturating_sub(last);
+                if stale_ms > WATCHDOG_TIMEOUT_MS {
+                    error!("💀 [WATCHDOG] {}ms sem eventos novos (limite {}ms) -- WebSocket morto, forcando saida do processo para restart externo", stale_ms, WATCHDOG_TIMEOUT_MS);
+                    std::process::exit(137);
+                }
+            }
+        });
+    }
     info!("🚀 Artemis + Apex-Predator engines running - DOMINATING Base Mainnet...");
     engine.run().await.map_err(|e| {
         error!("Engine failure: {}", e);
