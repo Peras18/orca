@@ -11,6 +11,7 @@ pub use v3::get_amount_out as get_amount_out_v3;
 pub mod kalman_gas;
 pub mod kalman_price;
 pub mod bayesian_success;
+pub mod rpc_scorer;
 pub mod transfer_entropy;
 pub mod flash_optimizer;
 pub mod spectral_graph;

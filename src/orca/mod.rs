@@ -511,6 +511,7 @@ pub struct OrcaEngine {
     kalman_gas: Arc<RwLock<crate::math::kalman_gas::KalmanGasPredictor>>,
     kalman_price: Arc<dashmap::DashMap<Address, crate::math::kalman_price::KalmanPricePredictor>>,
     bayesian_success: Arc<crate::math::bayesian_success::BayesianSuccessModel>,
+    rpc_scorer: Arc<crate::math::rpc_scorer::RpcScorer>,
     flash_optimizer: Arc<RwLock<crate::math::flash_optimizer::FlashLoanOptimizer>>,
     honeypot: Arc<crate::security::honeypot_filter::HoneypotFilter>,
     curvature: Arc<RwLock<crate::prediction::CurvatureDetector>>,
@@ -661,6 +662,7 @@ impl OrcaEngine {
             kalman_gas: Arc::new(RwLock::new(crate::math::kalman_gas::KalmanGasPredictor::new(0.1))),
             kalman_price: Arc::new(dashmap::DashMap::new()),
             bayesian_success: Arc::new(crate::math::bayesian_success::BayesianSuccessModel::new()),
+            rpc_scorer: Arc::new(crate::math::rpc_scorer::RpcScorer::new()),
             flash_optimizer: Arc::new(RwLock::new(crate::math::flash_optimizer::FlashLoanOptimizer::new())),
             honeypot: Arc::new(crate::security::honeypot_filter::HoneypotFilter::new()),
             curvature: Arc::new(RwLock::new(crate::prediction::CurvatureDetector::new())),
@@ -1017,13 +1019,26 @@ impl OrcaEngine {
             .map(|s| s.trim().to_string())
             .filter(|u| !u.is_empty() && !u.contains("mainnet.base.org"))
             .collect();
+        // INOVAÇÃO: endpoint público Flashblocks da Base -- preconfirmações a
+        // cada 200ms em vez dos blocos completos de 2s. Adicionado com
+        // prioridade (primeiro na corrida) porque o nonce lido aqui reflete
+        // estado mais recente que "latest" nos RPCs genéricos, atacando
+        // diretamente o maior componente da latência medida (~1267ms da
+        // corrida de nonce, de um total de ~1.9s detecção->eth_call).
+        rpc_candidates.insert(0, "https://mainnet-preconf.base.org".to_string());
         rpc_candidates.push("https://mainnet.base.org".to_string());
 
+        // INOVACAO: em vez de correr contra TODOS os RPCs sempre (auto-infligindo
+        // contencao/rate-limit em endpoints partilhados gratuitos), seleciona os
+        // 3 melhores por desempenho historico real (latencia + taxa de sucesso).
+        let rpc_candidates = self.rpc_scorer.top_n(&rpc_candidates, 3);
         let from_addr = signer.address();
         let mut join_set = tokio::task::JoinSet::new();
         for rpc_url in rpc_candidates.clone() {
             let wallet = wallet.clone();
+            let scorer = self.rpc_scorer.clone();
             join_set.spawn(async move {
+                let t_start = std::time::Instant::now();
                 let http_url: reqwest::Url = match rpc_url.parse() {
                     Ok(u) => u,
                     Err(_) => return (rpc_url, None),
@@ -1031,13 +1046,15 @@ impl OrcaEngine {
                 let candidate_provider = alloy::providers::ProviderBuilder::new()
                     .wallet(wallet)
                     .on_http(http_url);
-                match tokio::time::timeout(
+                let result = tokio::time::timeout(
                     std::time::Duration::from_millis(800),
-                    candidate_provider.get_transaction_count(from_addr),
-                ).await {
-                    Ok(Ok(n)) => (rpc_url, Some((n, candidate_provider))),
-                    Ok(Err(e)) => { warn!("[ORCA] RPC {} falhou: {}", rpc_url, e); (rpc_url, None) }
-                    Err(_) => { warn!("[ORCA] RPC {} timeout 800ms", rpc_url); (rpc_url, None) }
+                    candidate_provider.get_transaction_count(from_addr).pending(),
+                ).await;
+                let elapsed_ms = t_start.elapsed().as_millis() as f64;
+                match result {
+                    Ok(Ok(n)) => { scorer.record(&rpc_url, elapsed_ms, true); (rpc_url, Some((n, candidate_provider))) }
+                    Ok(Err(e)) => { warn!("[ORCA] RPC {} falhou: {}", rpc_url, e); scorer.record(&rpc_url, elapsed_ms, false); (rpc_url, None) }
+                    Err(_) => { warn!("[ORCA] RPC {} timeout 800ms", rpc_url); scorer.record(&rpc_url, 800.0, false); (rpc_url, None) }
                 }
             });
         }
@@ -1921,6 +1938,21 @@ impl Strategy for OrcaEngine {
                         .take(TOP_N_CANDIDATES)
                         .collect();
                     for best in candidates {
+                        // CORREÇÃO CRÍTICA: os filtros abaixo só LIAM o histórico Kalman
+                        // (self.kalman_price.get()), mas quem o ALIMENTA era só o código
+                        // de sizing, que corre DEPOIS no fluxo -- ou seja, os filtros
+                        // viam sempre um mapa vazio na primeira passagem por cada pool e
+                        // nunca bloqueavam nada (confirmado: 0 hits em 294 tentativas,
+                        // 96.6% LOSS). Agora atualiza-se aqui também, antes de ler.
+                        let now_ms_filter = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                        for h in best.hops.iter().filter(|h| h.dex_type == DexType::UniswapV3) {
+                            if let Some(sqrt_p) = h.sqrt_price_x96 {
+                                let normalized_price = sqrt_p as f64 / (2f64.powi(96));
+                                let mut entry = self.kalman_price.entry(h.pool)
+                                    .or_insert_with(|| crate::math::kalman_price::KalmanPricePredictor::new(normalized_price));
+                                entry.update(normalized_price, now_ms_filter);
+                            }
+                        }
                         // INOVAÇÃO: filtro de volatilidade preditiva -- usa o
                         // Kalman price já existente (read-only, sem custo extra)
                         // para saltar candidatos cuja pool está a derivar rápido
