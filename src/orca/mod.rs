@@ -1979,9 +1979,12 @@ impl Strategy for OrcaEngine {
                             .filter(|h| h.dex_type == DexType::UniswapV3)
                             .filter_map(|h| self.kalman_price.get(&h.pool).map(|e| e.relative_drift(1900.0)))
                             .sum();
-                        let input_size_f64 = best.hops.first()
-                            .map(|h| h.reserve_in.try_into().unwrap_or(u128::MAX) as f64 / 1e18)
-                            .unwrap_or(1.0).max(1e-9);
+                        // CORREÇÃO CRÍTICA: usava h.reserve_in (reserva TOTAL da pool,
+                        // podem ser milhões em TVL) como denominador em vez do tamanho
+                        // real do trade -- tornava profit_margin_ratio artificialmente
+                        // minúsculo e o filtro quase inútil (comparava lucro esperado
+                        // contra o TVL da pool inteira, não contra o que arriscamos).
+                        let input_size_f64 = (best.input_amount.try_into().unwrap_or(u128::MAX) as f64 / 1e18).max(1e-9);
                         let profit_margin_ratio = (best.net_profit.try_into().unwrap_or(u128::MAX) as f64 / 1e18) / input_size_f64;
                         const DRIFT_SAFETY_MULTIPLIER: f64 = 1.5;
                         if total_predicted_drift > 0.0 && profit_margin_ratio > 0.0
