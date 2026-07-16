@@ -451,18 +451,24 @@ contract OrcaExecutor is IFlashLoanRecipient {
         return IERC20(token).balanceOf(address(this));
     }
     
+    // CORRECAO (SWC-104 -- Unchecked Call Return Value): "success" de um
+    // .call() de baixo nivel so confirma que a chamada nao reverteu, NAO
+    // que o transfer()/approve() devolveu true. Um ERC20 nao-standard que
+    // devolva false em vez de reverter passaria como sucesso sem mover
+    // um unico token. Baixo risco atual (so usamos WETH/USDC/AERO, bem
+    // comportados), mas corrige-se sem custo.
     function _transfer(address token, address to, uint256 amount) internal {
-        (bool success,) = token.call(
+        (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
         );
-        require(success, "Transfer failed");
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "Transfer failed");
     }
-    
+
     function _approveMax(address token, address spender) internal {
-        (bool success,) = token.call(
+        (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(IERC20.approve.selector, spender, type(uint256).max)
         );
-        require(success, "Approve failed");
+        require(success && (data.length == 0 || abi.decode(data, (bool))), "Approve failed");
     }
     
     function _extractLoanAmount(bytes calldata route) internal pure returns (uint256) {
