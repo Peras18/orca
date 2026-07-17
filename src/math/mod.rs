@@ -12,6 +12,7 @@ pub mod kalman_gas;
 pub mod kalman_price;
 pub mod bayesian_success;
 pub mod rpc_scorer;
+pub mod pool_fatigue;
 pub mod transfer_entropy;
 pub mod flash_optimizer;
 pub mod spectral_graph;

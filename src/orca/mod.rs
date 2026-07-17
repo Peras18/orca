@@ -531,6 +531,7 @@ pub struct OrcaEngine {
     kalman_gas: Arc<RwLock<crate::math::kalman_gas::KalmanGasPredictor>>,
     kalman_price: Arc<dashmap::DashMap<Address, crate::math::kalman_price::KalmanPricePredictor>>,
     bayesian_success: Arc<crate::math::bayesian_success::BayesianSuccessModel>,
+    pool_fatigue: Arc<crate::math::pool_fatigue::PoolFatigueTracker>,
     rpc_scorer: Arc<crate::math::rpc_scorer::RpcScorer>,
     flash_optimizer: Arc<RwLock<crate::math::flash_optimizer::FlashLoanOptimizer>>,
     honeypot: Arc<crate::security::honeypot_filter::HoneypotFilter>,
@@ -682,6 +683,7 @@ impl OrcaEngine {
             kalman_gas: Arc::new(RwLock::new(crate::math::kalman_gas::KalmanGasPredictor::new(0.1))),
             kalman_price: Arc::new(dashmap::DashMap::new()),
             bayesian_success: Arc::new(crate::math::bayesian_success::BayesianSuccessModel::new()),
+            pool_fatigue: Arc::new(crate::math::pool_fatigue::PoolFatigueTracker::new()),
             rpc_scorer: Arc::new(crate::math::rpc_scorer::RpcScorer::new()),
             flash_optimizer: Arc::new(RwLock::new(crate::math::flash_optimizer::FlashLoanOptimizer::new())),
             honeypot: Arc::new(crate::security::honeypot_filter::HoneypotFilter::new()),
@@ -1119,6 +1121,9 @@ impl OrcaEngine {
         info!("[LATENCY-DIAG] deteccao->eth_call: {}ms", latency_ms);
         if let Err(e) = provider.call(&call_req).await {
             warn!("[ORCA] falha simulacao eth_call - abortado antes de gastar gas real: {}", e);
+            if let Some(first_hop) = bundle.hops.first() {
+                self.pool_fatigue.record_failure(first_hop.pool);
+            }
             return None;
         }
         debug!("[ORCA] simulacao eth_call passou - a enviar tx real");
@@ -1949,14 +1954,29 @@ impl Strategy for OrcaEngine {
                     // extra de tentar mais), aumentando as hipóteses de pelo menos 1
                     // sobreviver à janela de spread antes que o mercado a feche.
                     const TOP_N_CANDIDATES: usize = 3;
-                    let candidates: Vec<_> = opps.iter()
+                    // INOVAÇÃO (equilíbrio cauda-longa vs pools populares): dados reais
+                    // (1173 tentativas) mostram concentração massiva numa única pool
+                    // (2998 ocorrências, quase 3x a 2ª mais comum) -- exatamente onde a
+                    // concorrência de outros bots é maior (99.9% dos erros são IIA por
+                    // concorrência instantânea, não deriva previsível). O lucro continua
+                    // a ser o critério principal (não se troca qualidade por diversidade
+                    // às cegas); só se reordena DENTRO de um pool alargado de candidatos
+                    // (10, não 3) para dar prioridade aos não-cansados quando o lucro é
+                    // competitivo, evitando insistir sempre na pool mais disputada.
+                    const CANDIDATE_POOL_SIZE: usize = 10;
+                    let mut wide_candidates: Vec<_> = opps.iter()
                         .filter(|o| {
                             !o.net_profit.is_zero() && o.hops.iter().all(|h| {
                                 self.pool_cache.get(&h.pool).map(|p| p.reserve0 >= min_r || p.reserve1 >= min_r).unwrap_or(false)
                             })
                         })
-                        .take(TOP_N_CANDIDATES)
-                        .collect();
+                        .take(CANDIDATE_POOL_SIZE)
+                        .collect::<Vec<_>>();
+                    wide_candidates.sort_by_key(|o| {
+                        let fatigued = o.hops.first().map(|h| self.pool_fatigue.is_fatigued(&h.pool)).unwrap_or(false);
+                        fatigued // false (não cansado) ordena primeiro
+                    });
+                    let candidates: Vec<_> = wide_candidates.into_iter().take(TOP_N_CANDIDATES).collect();
                     for best in candidates {
                         // CORREÇÃO CRÍTICA: os filtros abaixo só LIAM o histórico Kalman
                         // (self.kalman_price.get()), mas quem o ALIMENTA era só o código
