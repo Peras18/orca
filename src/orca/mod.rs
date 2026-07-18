@@ -1972,9 +1972,25 @@ impl Strategy for OrcaEngine {
                         })
                         .take(CANDIDATE_POOL_SIZE)
                         .collect::<Vec<_>>();
+                    // CORREÇÃO: dados reais mostraram que reordenar às cegas por
+                    // fadiga custava ~3.5x de lucro mediano (0.00177 -> 0.0005 ETH) --
+                    // a pool dominante tem estruturalmente mais spread/lucro, não só
+                    // mais concorrência. Só desviar quando o lucro alternativo for
+                    // COMPARÁVEL (dentro de 30% do melhor candidato do lote alargado),
+                    // preservando as oportunidades grandes e diversificando apenas
+                    // entre opções realmente equivalentes em valor.
+                    let best_profit_in_pool = wide_candidates.iter()
+                        .map(|o| o.net_profit)
+                        .max()
+                        .unwrap_or(U256::ZERO);
+                    let profit_floor = best_profit_in_pool.saturating_mul(U256::from(70u64)) / U256::from(100u64);
                     wide_candidates.sort_by_key(|o| {
+                        let is_comparable = o.net_profit >= profit_floor;
                         let fatigued = o.hops.first().map(|h| self.pool_fatigue.is_fatigued(&h.pool)).unwrap_or(false);
-                        fatigued // false (não cansado) ordena primeiro
+                        // só penaliza fadiga se o lucro já for comparável ao melhor --
+                        // candidatos muito mais lucrativos nunca perdem prioridade
+                        let deprioritize = is_comparable && fatigued;
+                        (std::cmp::Reverse(o.net_profit.is_zero()), deprioritize)
                     });
                     let candidates: Vec<_> = wide_candidates.into_iter().take(TOP_N_CANDIDATES).collect();
                     for best in candidates {
